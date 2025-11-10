@@ -49,6 +49,16 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  * system for robot mobility, one high-speed motor driving two "launcher wheels", and two servos
  * which feed that launcher.
  *
+ * MECANUM WHEEL CONFIGURATION:
+ * This robot uses goBILDA 104mm mecanum wheels with only 2 motors. With this setup, the mecanum
+ * wheels will function similarly to regular wheels - you will NOT have omnidirectional movement
+ * (no strafing). To get full mecanum capabilities, you would need 4 motors (one per wheel).
+ *
+ * Current configuration: 2-motor tank drive with mecanum wheels
+ * - Forward/backward movement: Works normally
+ * - Rotation: Works normally
+ * - Strafing: NOT available (requires 4 motors)
+ *
  * Likely the most niche concept we'll use in this example is closed-loop motor velocity control.
  * This control method reads the current speed as reported by the motor's encoder and applies a varying
  * amount of power to reach, and then hold a target velocity. The FTC SDK calls this control method

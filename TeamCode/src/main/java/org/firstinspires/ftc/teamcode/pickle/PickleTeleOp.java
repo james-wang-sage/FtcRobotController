@@ -406,6 +406,8 @@ public class PickleTeleOp extends OpMode {
     }
 
     /*
+     * ARCADE DRIVE CONTROL
+     *
      * In arcade mode:
      *   - Left stick Y-axis → forward/backward movement (both motors work together)
      *   - Right stick X-axis → rotation/turning (motors work in opposition)
@@ -415,22 +417,73 @@ public class PickleTeleOp extends OpMode {
      *   - Right stick controls right motors directly
      *
      * Speed control:
-     *   - Normal mode: 60% max speed (easier to control than full speed)
+     *   - Normal mode: 70% max speed (easier to control than full speed)
      *   - Slow mode (left bumper): 30% max speed (precision movements)
+     *
+     * This implementation includes two critical fixes:
+     *
+     * 1. DEADBAND - Eliminates stick drift
+     *    Problem: Joysticks don't read exactly 0.0 when centered due to physical wear
+     *             or noise. Values like 0.02 or -0.03 cause unwanted robot drift.
+     *    Solution: Ignore small values near zero (threshold = 0.05 or 5%)
+     *
+     * 2. NORMALIZATION - Preserves turn radius at all speeds
+     *    Problem: When forward + rotate exceed ±1.0, motor controllers clip the values
+     *             asymmetrically, distorting the intended movement direction.
+     *             Example: forward=1.0, rotate=1.0 → left=(1.0+1.0)=2.0 gets clipped to 1.0
+     *                      but right=(1.0-1.0)=0.0 stays at 0.0. This breaks the 2:0 ratio.
+     *    Solution: Scale down the entire vector proportionally to keep maximum at 1.0
+     *              while preserving the ratio between left and right motor powers.
      */
     void arcadeDrive(double forward, double rotate) {
-        // Choose speed multiplier based on mode
+        // STEP 1: Apply deadband to eliminate stick drift
+        // Joystick noise (0.02, -0.03, etc.) is treated as 0.0
+        final double DEADBAND = 0.05;  // 5% deadband threshold
+        forward = applyDeadband(forward, DEADBAND);
+        rotate = applyDeadband(rotate, DEADBAND);
+
+        // STEP 2: Calculate raw motor powers
+        // Arcade drive: left = forward + rotate, right = forward - rotate
+        double rawLeftPower = forward + rotate;
+        double rawRightPower = forward - rotate;
+
+        // STEP 3: Normalize to prevent clipping distortion
+        // Find the maximum absolute value between the two motor powers
+        // If max > 1.0, scale both down proportionally to keep ratio intact
+        double maxPower = Math.max(1.0, Math.max(Math.abs(rawLeftPower), Math.abs(rawRightPower)));
+        rawLeftPower = rawLeftPower / maxPower;
+        rawRightPower = rawRightPower / maxPower;
+
+        // STEP 4: Apply speed multiplier for normal/slow mode
         double speedMultiplier = slowMode ? SLOW_DRIVE_SPEED : NORMAL_DRIVE_SPEED;
+        leftPower = rawLeftPower * speedMultiplier;
+        rightPower = rawRightPower * speedMultiplier;
 
-        // Calculate motor powers with speed reduction
-        leftPower = (forward + rotate) * speedMultiplier;
-        rightPower = (forward - rotate) * speedMultiplier;
-
-        /*
-         * Send calculated power to wheels
-         */
+        // STEP 5: Send calculated power to wheels
         leftDrive.setPower(leftPower);
         rightDrive.setPower(rightPower);
+    }
+
+    /*
+     * DEADBAND HELPER FUNCTION
+     *
+     * Treats small joystick values as zero to prevent drift from stick noise.
+     *
+     * How it works:
+     *   - If |value| < deadband → return 0.0 (ignore noise)
+     *   - Otherwise → return value as-is
+     *
+     * Example with deadband = 0.05:
+     *   - Input: 0.03 → Output: 0.0 (robot stays still)
+     *   - Input: -0.04 → Output: 0.0 (robot stays still)
+     *   - Input: 0.8 → Output: 0.8 (normal movement)
+     *   - Input: -0.6 → Output: -0.6 (normal movement)
+     */
+    double applyDeadband(double value, double deadband) {
+        if (Math.abs(value) < deadband) {
+            return 0.0;
+        }
+        return value;
     }
 
     void launch(boolean shotRequested) {

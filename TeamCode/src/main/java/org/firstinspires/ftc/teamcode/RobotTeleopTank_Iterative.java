@@ -30,26 +30,27 @@
 package org.firstinspires.ftc.teamcode;
 
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.Range;
 
 /*
- * This OpMode executes a POV (Point of View) Game style Teleop for a direct drive robot
- * The code is structured as a LinearOpMode
+ * This OpMode executes a Tank Drive control TeleOp a direct drive robot
+ * The code is structured as an Iterative OpMode
  *
- * In this mode the left stick moves the robot FWD and back, the Right stick turns left and right.
- * It raises and lowers the arm using the Gamepad Y and A buttons respectively.
+ * In this mode, the left and right joysticks control the left and right motors respectively.
+ * Pushing a joystick forward will make the attached motor drive forward.
+ * It raises and lowers the claw using the Gamepad Y and A buttons respectively.
  * It also opens and closes the claws slowly using the left and right Bumper buttons.
  *
  * Use Android Studio to Copy this Class, and Paste it into your team's code folder with a new name.
  * Remove or comment out the @Disabled line to add this OpMode to the Driver Station OpMode list
  */
 
-@TeleOp(name="Robot: Teleop POV", group="Robot")
-public class RobotTeleopPOV_Linear extends LinearOpMode {
+@TeleOp(name="Robot: Teleop Tank", group="Robot")
+public class RobotTeleopTank_Iterative extends OpMode{
 
     /* Declare OpMode members. */
     public DcMotor  leftDrive   = null;
@@ -61,25 +62,22 @@ public class RobotTeleopPOV_Linear extends LinearOpMode {
     double clawOffset = 0;
 
     public static final double MID_SERVO   =  0.5 ;
-    public static final double CLAW_SPEED  = 0.02 ;                 // sets rate to move servo
-    public static final double ARM_UP_POWER    =  0.45 ;
-    public static final double ARM_DOWN_POWER  = -0.45 ;
+    public static final double CLAW_SPEED  = 0.02 ;        // sets rate to move servo
+    public static final double ARM_UP_POWER    =  0.50 ;   // Run arm motor up at 50% power
+    public static final double ARM_DOWN_POWER  = -0.25 ;   // Run arm motor down at -25% power
 
+    /*
+     * Code to run ONCE when the driver hits INIT
+     */
     @Override
-    public void runOpMode() {
-        double left;
-        double right;
-        double drive;
-        double turn;
-        double max;
-
+    public void init() {
         // Define and Initialize Motors
         leftDrive  = hardwareMap.get(DcMotor.class, "left_drive");
         rightDrive = hardwareMap.get(DcMotor.class, "right_drive");
         leftArm    = hardwareMap.get(DcMotor.class, "left_arm");
 
         // To drive forward, most robots need the motor on one side to be reversed, because the axles point in opposite directions.
-        // Pushing the left stick forward MUST make robot go forward. So adjust these two lines based on your first test drive.
+        // Pushing the left and right sticks forward MUST make robot go forward. So adjust these two lines based on your first test drive.
         // Note: The settings here assume direct drive on left and right wheels.  Gear Reduction or 90 Deg drives may require direction flips
         leftDrive.setDirection(DcMotor.Direction.REVERSE);
         rightDrive.setDirection(DcMotor.Direction.FORWARD);
@@ -96,63 +94,66 @@ public class RobotTeleopPOV_Linear extends LinearOpMode {
 
         // Send telemetry message to signify robot waiting;
         telemetry.addData(">", "Robot Ready.  Press START.");    //
-        telemetry.update();
+    }
 
-        // Wait for the game to start (driver presses START)
-        waitForStart();
+    /*
+     * Code to run REPEATEDLY after the driver hits INIT, but before they hit START
+     */
+    @Override
+    public void init_loop() {
+    }
 
-        // run until the end of the match (driver presses STOP)
-        while (opModeIsActive()) {
+    /*
+     * Code to run ONCE when the driver hits START
+     */
+    @Override
+    public void start() {
+    }
 
-            // Run wheels in POV mode (note: The joystick goes negative when pushed forward, so negate it)
-            // In this mode the Left stick moves the robot fwd and back, the Right stick turns left and right.
-            // This way it's also easy to just drive straight, or just turn.
-            drive = -gamepad1.left_stick_y;
-            turn  =  gamepad1.right_stick_x;
+    /*
+     * Code to run REPEATEDLY after the driver hits START but before they hit STOP
+     */
+    @Override
+    public void loop() {
+        double left;
+        double right;
 
-            // Combine drive and turn for blended motion.
-            left  = drive + turn;
-            right = drive - turn;
+        // Run wheels in tank mode (note: The joystick goes negative when pushed forward, so negate it)
+        left = -gamepad1.left_stick_y;
+        right = -gamepad1.right_stick_y;
 
-            // Normalize the values so neither exceed +/- 1.0
-            max = Math.max(Math.abs(left), Math.abs(right));
-            if (max > 1.0)
-            {
-                left /= max;
-                right /= max;
-            }
+        leftDrive.setPower(left);
+        rightDrive.setPower(right);
 
-            // Output the safe vales to the motor drives.
-            leftDrive.setPower(left);
-            rightDrive.setPower(right);
+        // Use gamepad left & right Bumpers to open and close the claw
+        if (gamepad1.right_bumper)
+            clawOffset += CLAW_SPEED;
+        else if (gamepad1.left_bumper)
+            clawOffset -= CLAW_SPEED;
 
-            // Use gamepad left & right Bumpers to open and close the claw
-            if (gamepad1.right_bumper)
-                clawOffset += CLAW_SPEED;
-            else if (gamepad1.left_bumper)
-                clawOffset -= CLAW_SPEED;
+        // Move both servos to new position.  Assume servos are mirror image of each other.
+        clawOffset = Range.clip(clawOffset, -0.5, 0.5);
+        leftClaw.setPosition(MID_SERVO + clawOffset);
+        rightClaw.setPosition(MID_SERVO - clawOffset);
 
-            // Move both servos to new position.  Assume servos are mirror image of each other.
-            clawOffset = Range.clip(clawOffset, -0.5, 0.5);
-            leftClaw.setPosition(MID_SERVO + clawOffset);
-            rightClaw.setPosition(MID_SERVO - clawOffset);
+        // Use gamepad buttons to move the arm up (Y) and down (A)
+        if (gamepad1.y)
+            leftArm.setPower(ARM_UP_POWER);
+        else if (gamepad1.a)
+            leftArm.setPower(ARM_DOWN_POWER);
+        else
+            leftArm.setPower(0.0);
 
-            // Use gamepad buttons to move arm up (Y) and down (A)
-            if (gamepad1.y)
-                leftArm.setPower(ARM_UP_POWER);
-            else if (gamepad1.a)
-                leftArm.setPower(ARM_DOWN_POWER);
-            else
-                leftArm.setPower(0.0);
+        // Send telemetry message to signify robot running;
+        telemetry.addData("claw",  "Offset = %.2f", clawOffset);
+        telemetry.addData("left",  "%.2f", left);
+        telemetry.addData("right", "%.2f", right);
+    }
 
-            // Send telemetry message to signify robot running;
-            telemetry.addData("claw",  "Offset = %.2f", clawOffset);
-            telemetry.addData("left",  "%.2f", left);
-            telemetry.addData("right", "%.2f", right);
-            telemetry.update();
-
-            // Pace this loop so jaw action is reasonable speed.
-            sleep(50);
-        }
+    /*
+     * Code to run ONCE after the driver hits STOP
+     */
+    @Override
+    public void stop() {
     }
 }

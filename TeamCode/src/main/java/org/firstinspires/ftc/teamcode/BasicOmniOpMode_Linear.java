@@ -68,7 +68,6 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  */
 
 @TeleOp(name="Enhanced 2-Motor Drive", group="TeamCode")
-//@Disabled  // Remove this line to enable the OpMode in Driver Station
 public class BasicOmniOpMode_Linear extends LinearOpMode {
 
     // Speed control multipliers

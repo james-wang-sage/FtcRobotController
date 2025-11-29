@@ -43,8 +43,14 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+
+import java.util.List;
 
 /*
  * This file includes an autonomous file for the goBILDA® StarterBot for the
@@ -118,6 +124,14 @@ public class PickleAutoOp extends OpMode
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
+
+    /*
+     * AprilTag vision components. The AprilTagProcessor handles the detection of AprilTags
+     * in the camera frame, while the VisionPortal manages the camera hardware and processing
+     * pipeline. AprilTags can be used for robot localization and navigation during autonomous.
+     */
+    private AprilTagProcessor aprilTag;
+    private VisionPortal visionPortal;
 
     /*
      * TECH TIP: State Machines
@@ -241,6 +255,13 @@ public class PickleAutoOp extends OpMode
          */
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
+        /*
+         * Initialize the AprilTag processor and VisionPortal.
+         * The "easy" methods create default configurations that work well for most use cases.
+         * The AprilTag processor will automatically detect any visible AprilTags and provide
+         * pose estimation data (position and orientation relative to the camera).
+         */
+        initAprilTag();
 
         // Tell the driver that initialization is complete.
         telemetry.addData("Status", "Initialized");
@@ -381,14 +402,23 @@ public class PickleAutoOp extends OpMode
                 leftDrive.getCurrentPosition(), rightDrive.getCurrentPosition());
         telemetry.addData("Motor Target Positions", "left (%d), right (%d)",
                 leftDrive.getTargetPosition(), rightDrive.getTargetPosition());
+
+        // Display AprilTag detection information
+        telemetryAprilTag();
+
         telemetry.update();
     }
 
     /*
      * This code runs ONCE after the driver hits STOP.
+     * We close the VisionPortal here to release camera resources and save CPU.
      */
     @Override
     public void stop() {
+        // Release camera resources when the OpMode stops
+        if (visionPortal != null) {
+            visionPortal.close();
+        }
     }
 
     /**
@@ -517,6 +547,81 @@ public class PickleAutoOp extends OpMode
         }
 
         return (driveTimer.seconds() > holdSeconds);
+    }
+
+    /**
+     * Initialize the AprilTag processor and vision portal.
+     * This uses the "easy" creation methods which provide sensible defaults.
+     * The camera name "Webcam 1" must match the name configured in the robot configuration.
+     */
+    private void initAprilTag() {
+        // Create the AprilTag processor using easy defaults.
+        // This automatically configures tag family, decimation, and other parameters.
+        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+
+        // Create the vision portal using easy defaults with a webcam.
+        // The webcam name must match the configuration in the Driver Station.
+        visionPortal = VisionPortal.easyCreateWithDefaults(
+                hardwareMap.get(WebcamName.class, "Webcam 1"), aprilTag);
+    }
+
+    /**
+     * Add telemetry about AprilTag detections.
+     * This displays information about any detected AprilTags including their ID,
+     * position (XYZ), orientation (pitch/roll/yaw), and polar coordinates (range/bearing/elevation).
+     */
+    private void telemetryAprilTag() {
+        List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        telemetry.addData("# AprilTags Detected", currentDetections.size());
+
+        // Step through the list of detections and display info for each one.
+        for (AprilTagDetection detection : currentDetections) {
+            if (detection.metadata != null) {
+                // Tag is in the library - we have full pose information
+                telemetry.addLine(String.format("\n==== (ID %d) %s", detection.id, detection.metadata.name));
+                telemetry.addLine(String.format("XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
+                telemetry.addLine(String.format("PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
+                telemetry.addLine(String.format("RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
+            } else {
+                // Tag not in library - only have pixel position
+                telemetry.addLine(String.format("\n==== (ID %d) Unknown", detection.id));
+                telemetry.addLine(String.format("Center %6.0f %6.0f   (pixels)", detection.center.x, detection.center.y));
+            }
+        }
+
+        // Add "key" information to telemetry
+        telemetry.addLine("\nkey:\nXYZ = X (Right), Y (Forward), Z (Up) dist.");
+        telemetry.addLine("PRY = Pitch, Roll & Yaw (XYZ Rotation)");
+        telemetry.addLine("RBE = Range, Bearing & Elevation");
+    }
+
+    /**
+     * Gets the first detected AprilTag, or null if none detected.
+     * This is a helper method for using AprilTag detection in autonomous navigation.
+     * @return The first AprilTagDetection, or null if no tags are visible.
+     */
+    private AprilTagDetection getFirstDetection() {
+        List<AprilTagDetection> detections = aprilTag.getDetections();
+        if (!detections.isEmpty()) {
+            return detections.get(0);
+        }
+        return null;
+    }
+
+    /**
+     * Gets a specific AprilTag detection by ID, or null if not found.
+     * Useful for targeting a specific tag during autonomous navigation.
+     * @param targetId The ID of the AprilTag to find.
+     * @return The AprilTagDetection with the specified ID, or null if not found.
+     */
+    private AprilTagDetection getDetectionById(int targetId) {
+        List<AprilTagDetection> detections = aprilTag.getDetections();
+        for (AprilTagDetection detection : detections) {
+            if (detection.id == targetId) {
+                return detection;
+            }
+        }
+        return null;
     }
 }
 

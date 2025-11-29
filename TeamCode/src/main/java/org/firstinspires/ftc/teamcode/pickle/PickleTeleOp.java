@@ -45,19 +45,24 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 /*
  * This file includes a teleop (driver-controlled) file for the goBILDA® StarterBot for the
- * 2025-2026 FIRST® Tech Challenge season DECODE™. It leverages a differential/Skid-Steer
- * system for robot mobility, one high-speed motor driving two "launcher wheels", and two servos
- * which feed that launcher.
+ * 2025-2026 FIRST® Tech Challenge season DECODE™. It uses a 4-motor MECANUM DRIVE system
+ * for full omnidirectional robot mobility, one high-speed motor driving two "launcher wheels",
+ * and two servos which feed that launcher.
  *
- * MECANUM WHEEL CONFIGURATION:
- * This robot uses goBILDA 104mm mecanum wheels with only 2 motors. With this setup, the mecanum
- * wheels will function similarly to regular wheels - you will NOT have omnidirectional movement
- * (no strafing). To get full mecanum capabilities, you would need 4 motors (one per wheel).
+ * MECANUM WHEEL CONFIGURATION (4 Motors):
+ * This robot uses goBILDA 104mm mecanum wheels with 4 motors (one per wheel).
+ * This provides FULL omnidirectional movement:
+ * - Forward/backward movement: Left stick Y-axis
+ * - Strafing (side-to-side): Left stick X-axis
+ * - Rotation: Right stick X-axis
  *
- * Current configuration: 2-motor tank drive with mecanum wheels
- * - Forward/backward movement: Works normally
- * - Rotation: Works normally
- * - Strafing: NOT available (requires 4 motors)
+ * WHEEL ARRANGEMENT (viewed from above):
+ *     FRONT
+ *   FL     FR     (FL = Front Left, FR = Front Right)
+ *     \   /       Arrows show roller direction
+ *     /   \
+ *   BL     BR     (BL = Back Left, BR = Back Right)
+ *     BACK
  *
  * Likely the most niche concept we'll use in this example is closed-loop motor velocity control.
  * This control method reads the current speed as reported by the motor's encoder and applies a varying
@@ -72,8 +77,10 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 public class PickleTeleOp extends OpMode {
     /*
      * REQUIRED HARDWARE CONFIGURATION (configured in Driver Station app):
-     * - "left_drive"    : DcMotor (drive motor, left side)
-     * - "right_drive"   : DcMotor (drive motor, right side)
+     * - "front_left"    : DcMotor (mecanum drive motor, front left)
+     * - "front_right"   : DcMotor (mecanum drive motor, front right)
+     * - "back_left"     : DcMotor (mecanum drive motor, back left)
+     * - "back_right"    : DcMotor (mecanum drive motor, back right)
      * - "launcher"      : DcMotorEx (high-speed launcher motor with encoder)
      * - "left_feeder"   : CRServo (continuous rotation servo)
      * - "right_feeder"  : CRServo (continuous rotation servo)
@@ -82,6 +89,12 @@ public class PickleTeleOp extends OpMode {
      * - All motors must have encoders connected to use RUN_USING_ENCODER mode
      * - Launcher motor assumes goBILDA 5203/5204 or similar (28 CPR encoder)
      * - Drive motors work with any standard FTC motors with encoders
+     *
+     * CONTROL HUB PORT MAPPING (recommended):
+     * - Port 0: front_left
+     * - Port 1: front_right
+     * - Port 2: back_left
+     * - Port 3: back_right
      */
 
     final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
@@ -116,9 +129,11 @@ public class PickleTeleOp extends OpMode {
     final double LAUNCHER_TARGET_VELOCITY = 1125;  // Target speed in encoder ticks/second
     final double LAUNCHER_MIN_VELOCITY = 1075;     // Minimum speed before allowing launch
 
-    // Declare OpMode members.
-    private DcMotor leftDrive = null;
-    private DcMotor rightDrive = null;
+    // Declare OpMode members - 4 mecanum drive motors
+    private DcMotor frontLeft = null;
+    private DcMotor frontRight = null;
+    private DcMotor backLeft = null;
+    private DcMotor backRight = null;
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
@@ -155,9 +170,11 @@ public class PickleTeleOp extends OpMode {
     final double NORMAL_DRIVE_SPEED = 0.7;  // 70% speed - adjust this value to tune driving feel
     final double SLOW_DRIVE_SPEED = 0.3;    // 30% speed for precision mode (activated with left bumper)
 
-    // Setup a variable for each drive wheel to save power level for telemetry
-    double leftPower;
-    double rightPower;
+    // Setup variables for each drive wheel to save power level for telemetry
+    double frontLeftPower;
+    double frontRightPower;
+    double backLeftPower;
+    double backRightPower;
     boolean slowMode = false;
 
     /*
@@ -175,35 +192,38 @@ public class PickleTeleOp extends OpMode {
         /*
          * Initialize the hardware variables. Note that the strings used here as parameters
          * to 'get' must correspond to the names assigned during the robot configuration
-         * step.
+         * step (using the FTC Robot Controller app on the phone/hub).
          */
-        leftDrive = hardwareMap.get(DcMotor.class, "left_drive");
-        rightDrive = hardwareMap.get(DcMotor.class, "right_drive");
+        frontLeft = hardwareMap.get(DcMotor.class, "front_left");
+        frontRight = hardwareMap.get(DcMotor.class, "front_right");
+        backLeft = hardwareMap.get(DcMotor.class, "back_left");
+        backRight = hardwareMap.get(DcMotor.class, "back_right");
         launcher = hardwareMap.get(DcMotorEx.class, "launcher");
         leftFeeder = hardwareMap.get(CRServo.class, "left_feeder");
         rightFeeder = hardwareMap.get(CRServo.class, "right_feeder");
 
         /*
-         * MOTOR DIRECTION SETUP - Why reverse one motor?
+         * MECANUM MOTOR DIRECTION SETUP
          *
-         * Motors are physically mounted on opposite sides of the robot. When both motors
-         * spin the same direction, the wheels turn AGAINST each other (one forward, one backward),
-         * causing the robot to spin in place instead of driving forward.
+         * For mecanum drive, motors on opposite sides spin in opposite directions to drive forward.
+         * The left side motors are reversed so that positive power to all motors moves the robot forward.
          *
-         * By reversing one motor, when you send positive power to both:
-         *   - Left motor (REVERSE): spins "backward" → left wheel goes forward
-         *   - Right motor (FORWARD): spins "forward" → right wheel goes forward
-         *   - Result: Robot drives forward! ✓
+         * STANDARD CONFIGURATION:
+         *   - Left motors (REVERSE): Spin "backward" mechanically → wheels move forward
+         *   - Right motors (FORWARD): Spin "forward" → wheels move forward
+         *   - Result: Robot drives forward when all motors get positive power! ✓
          *
-         * Think of it like your hands: if both rotate the same way but face opposite directions,
-         * they move in opposite linear directions.
-         *
-         * IMPORTANT: Test drive your robot first! Which motor to reverse depends on your
-         * specific wiring and mechanical setup. If the robot spins or goes backward when
-         * pushing forward on the joystick, swap these REVERSE/FORWARD settings.
+         * IMPORTANT: Test drive your robot! If the robot spins, strafes incorrectly, or moves
+         * backward when expected to go forward, you may need to swap some direction settings.
+         * Common issues:
+         *   - Robot spins instead of driving straight: Check left/right directions
+         *   - Robot drives backward: Swap ALL directions (REVERSE↔FORWARD)
+         *   - Strafing goes wrong direction: Check diagonal motor pairs
          */
-        leftDrive.setDirection(DcMotor.Direction.REVERSE);
-        rightDrive.setDirection(DcMotor.Direction.FORWARD);
+        frontLeft.setDirection(DcMotor.Direction.REVERSE);
+        backLeft.setDirection(DcMotor.Direction.REVERSE);
+        frontRight.setDirection(DcMotor.Direction.FORWARD);
+        backRight.setDirection(DcMotor.Direction.FORWARD);
 
         /*
          * MOTOR RUN MODE OPTIONS:
@@ -242,8 +262,10 @@ public class PickleTeleOp extends OpMode {
          * If the robot doesn't respond to controls after this change, check that encoder
          * cables are plugged into the motor ports (not separate encoder ports).
          */
-        leftDrive.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        rightDrive.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 
         /*
          * Here we set our launcher to the RUN_USING_ENCODER runmode.
@@ -259,8 +281,10 @@ public class PickleTeleOp extends OpMode {
          * slow down much faster when it is coasting. This creates a much more controllable
          * drivetrain. As the robot stops much quicker.
          */
-        leftDrive.setZeroPowerBehavior(BRAKE);
-        rightDrive.setZeroPowerBehavior(BRAKE);
+        frontLeft.setZeroPowerBehavior(BRAKE);
+        frontRight.setZeroPowerBehavior(BRAKE);
+        backLeft.setZeroPowerBehavior(BRAKE);
+        backRight.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
 
         /*
@@ -349,17 +373,17 @@ public class PickleTeleOp extends OpMode {
         }
 
         /*
-         * Here we call a function called arcadeDrive. The arcadeDrive function takes the input from
-         * the joysticks, and applies power to the left and right drive motor to move the robot
-         * as requested by the driver. "arcade" refers to the control style we're using here.
-         * Much like a classic arcade game, when you move the left joystick forward both motors
-         * work to drive the robot forward, and when you move the right joystick left and right
-         * both motors work to rotate the robot. Combinations of these inputs can be used to create
-         * more complex maneuvers.
+         * MECANUM DRIVE CONTROLS:
+         * - Left stick Y-axis: Forward/backward movement
+         * - Left stick X-axis: Strafing (side-to-side movement)
+         * - Right stick X-axis: Rotation (turning)
          *
-         * The speed is now reduced to make the robot easier to control!
+         * The mecanumDrive function calculates the power for all 4 motors based on these inputs,
+         * allowing the robot to move in any direction while simultaneously rotating.
+         *
+         * Note: We negate left_stick_y because pushing forward gives negative values on gamepad.
          */
-        arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
+        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x);
 
         /*
          * Here we give the user control of the speed of the launcher motor without automatically
@@ -390,8 +414,10 @@ public class PickleTeleOp extends OpMode {
             telemetry.addData("Launch Status", "READY");
         }
 
-        telemetry.addData("Motors", "left (%.2f), right (%.2f)", leftPower, rightPower);
-        telemetry.addData("motorSpeed", launcher.getVelocity());
+        // Display all 4 motor powers in a readable format
+        telemetry.addData("Front Motors", "L:%.2f  R:%.2f", frontLeftPower, frontRightPower);
+        telemetry.addData("Back Motors", "L:%.2f  R:%.2f", backLeftPower, backRightPower);
+        telemetry.addData("Launcher Speed", launcher.getVelocity());
 
     }
 
@@ -403,62 +429,72 @@ public class PickleTeleOp extends OpMode {
     }
 
     /*
-     * ARCADE DRIVE CONTROL
+     * MECANUM DRIVE CONTROL
      *
-     * In arcade mode:
-     *   - Left stick Y-axis → forward/backward movement (both motors work together)
-     *   - Right stick X-axis → rotation/turning (motors work in opposition)
+     * Mecanum wheels have rollers at 45° angles that create unique force vectors.
+     * By combining the power of 4 wheels, the robot can move in ANY direction:
      *
-     * In contrast, tank mode would have:
-     *   - Left stick controls left motors directly
-     *   - Right stick controls right motors directly
+     *   - Left stick Y-axis (forward): All wheels work together for forward/backward
+     *   - Left stick X-axis (strafe): Diagonal wheel pairs work together for side movement
+     *   - Right stick X-axis (rotate): Left/right sides oppose for rotation
+     *
+     * MECANUM DRIVE FORMULA (standard configuration):
+     *   Front Left  = forward + strafe + rotate
+     *   Front Right = forward - strafe - rotate
+     *   Back Left   = forward - strafe + rotate
+     *   Back Right  = forward + strafe - rotate
+     *
+     * WHY THIS WORKS:
+     * When strafing right (strafe > 0):
+     *   - FL and BR spin forward (rollers push robot right)
+     *   - FR and BL spin backward (rollers also push robot right)
+     *   - All 4 wheels contribute to rightward motion!
      *
      * Speed control:
      *   - Normal mode: 70% max speed (easier to control than full speed)
      *   - Slow mode (left bumper): 30% max speed (precision movements)
      *
-     * This implementation includes two critical fixes:
-     *
-     * 1. DEADBAND - Eliminates stick drift
-     *    Problem: Joysticks don't read exactly 0.0 when centered due to physical wear
-     *             or noise. Values like 0.02 or -0.03 cause unwanted robot drift.
-     *    Solution: Ignore small values near zero (threshold = 0.05 or 5%)
-     *
-     * 2. NORMALIZATION - Preserves turn radius at all speeds
-     *    Problem: When forward + rotate exceed ±1.0, motor controllers clip the values
-     *             asymmetrically, distorting the intended movement direction.
-     *             Example: forward=1.0, rotate=1.0 → left=(1.0+1.0)=2.0 gets clipped to 1.0
-     *                      but right=(1.0-1.0)=0.0 stays at 0.0. This breaks the 2:0 ratio.
-     *    Solution: Scale down the entire vector proportionally to keep maximum at 1.0
-     *              while preserving the ratio between left and right motor powers.
+     * This implementation includes:
+     * 1. DEADBAND - Ignores joystick drift (values < 5%)
+     * 2. NORMALIZATION - Scales powers proportionally when exceeding ±1.0
      */
-    void arcadeDrive(double forward, double rotate) {
+    void mecanumDrive(double forward, double strafe, double rotate) {
         // STEP 1: Apply deadband to eliminate stick drift
-        // Joystick noise (0.02, -0.03, etc.) is treated as 0.0
         final double DEADBAND = 0.05;  // 5% deadband threshold
         forward = applyDeadband(forward, DEADBAND);
+        strafe = applyDeadband(strafe, DEADBAND);
         rotate = applyDeadband(rotate, DEADBAND);
 
-        // STEP 2: Calculate raw motor powers
-        // Arcade drive: left = forward + rotate, right = forward - rotate
-        double rawLeftPower = forward + rotate;
-        double rawRightPower = forward - rotate;
+        // STEP 2: Calculate raw motor powers using mecanum drive formula
+        double rawFrontLeft = forward + strafe + rotate;
+        double rawFrontRight = forward - strafe - rotate;
+        double rawBackLeft = forward - strafe + rotate;
+        double rawBackRight = forward + strafe - rotate;
 
         // STEP 3: Normalize to prevent clipping distortion
-        // Find the maximum absolute value between the two motor powers
-        // If max > 1.0, scale both down proportionally to keep ratio intact
-        double maxPower = Math.max(1.0, Math.max(Math.abs(rawLeftPower), Math.abs(rawRightPower)));
-        rawLeftPower = rawLeftPower / maxPower;
-        rawRightPower = rawRightPower / maxPower;
+        // Find the maximum absolute value among all 4 motors
+        // If max > 1.0, scale all down proportionally to preserve the ratio
+        double maxPower = Math.max(1.0, Math.max(
+                Math.max(Math.abs(rawFrontLeft), Math.abs(rawFrontRight)),
+                Math.max(Math.abs(rawBackLeft), Math.abs(rawBackRight))
+        ));
+        rawFrontLeft /= maxPower;
+        rawFrontRight /= maxPower;
+        rawBackLeft /= maxPower;
+        rawBackRight /= maxPower;
 
         // STEP 4: Apply speed multiplier for normal/slow mode
         double speedMultiplier = slowMode ? SLOW_DRIVE_SPEED : NORMAL_DRIVE_SPEED;
-        leftPower = rawLeftPower * speedMultiplier;
-        rightPower = rawRightPower * speedMultiplier;
+        frontLeftPower = rawFrontLeft * speedMultiplier;
+        frontRightPower = rawFrontRight * speedMultiplier;
+        backLeftPower = rawBackLeft * speedMultiplier;
+        backRightPower = rawBackRight * speedMultiplier;
 
-        // STEP 5: Send calculated power to wheels
-        leftDrive.setPower(leftPower);
-        rightDrive.setPower(rightPower);
+        // STEP 5: Send calculated power to all 4 wheels
+        frontLeft.setPower(frontLeftPower);
+        frontRight.setPower(frontRightPower);
+        backLeft.setPower(backLeftPower);
+        backRight.setPower(backRightPower);
     }
 
     /*

@@ -171,6 +171,22 @@ public class PickleTeleOp extends OpMode {
     final double NORMAL_DRIVE_SPEED = 0.7;  // 70% speed - adjust this value to tune driving feel
     final double SLOW_DRIVE_SPEED = 0.3;    // 30% speed for precision mode (activated with left bumper)
 
+    /*
+     * STRAFE COMPENSATION MULTIPLIER
+     *
+     * Mecanum wheels are less efficient at strafing than driving forward/backward.
+     * This is due to:
+     * - Roller friction (rollers slide sideways during strafe)
+     * - Weight transfer (robot "leans" during lateral movement)
+     * - Floor surface interaction
+     *
+     * A multiplier > 1.0 compensates for this loss. Start with 1.1 and tune:
+     * - If strafing feels sluggish compared to forward: increase (try 1.2)
+     * - If strafing feels too sensitive: decrease (try 1.05)
+     * - If robot drifts forward/backward while strafing: motors may need recalibration
+     */
+    final double STRAFE_MULTIPLIER = 1.1;
+
     // Setup variables for each drive wheel to save power level for telemetry
     double frontLeftPower;
     double frontRightPower;
@@ -420,13 +436,42 @@ public class PickleTeleOp extends OpMode {
         telemetry.addData("Back Motors", "L:%.2f  R:%.2f", backLeftPower, backRightPower);
         telemetry.addData("Launcher Speed", launcher.getVelocity());
 
+        /*
+         * IMPORTANT: telemetry.update() must be called to push data to Driver Station
+         *
+         * Without this call, telemetry data is queued but never sent to the display.
+         * The Driver Station screen would show stale or no data. This is a common
+         * mistake that makes debugging difficult since you can't see what's happening.
+         */
+        telemetry.update();
     }
 
     /*
      * Code to run ONCE after the driver hits STOP
+     *
+     * CRITICAL SAFETY METHOD: This ensures all motors and servos are stopped
+     * when the OpMode ends. Without this cleanup:
+     * - Motors could keep spinning at their last commanded power
+     * - Servos could remain active
+     * - The robot could move unexpectedly when disabled
+     *
+     * This is especially important if the OpMode crashes or is stopped
+     * mid-operation. Always implement proper cleanup in stop()!
      */
     @Override
     public void stop() {
+        // Stop all drive motors - prevents robot from rolling away
+        frontLeft.setPower(0);
+        frontRight.setPower(0);
+        backLeft.setPower(0);
+        backRight.setPower(0);
+
+        // Stop the launcher motor - safety first with spinning mechanisms
+        launcher.setVelocity(0);
+
+        // Stop feeder servos - ensures no continued feeding action
+        leftFeeder.setPower(0);
+        rightFeeder.setPower(0);
     }
 
     /*
@@ -460,19 +505,36 @@ public class PickleTeleOp extends OpMode {
      * 2. NORMALIZATION - Scales powers proportionally when exceeding ±1.0
      */
     void mecanumDrive(double forward, double strafe, double rotate) {
-        // STEP 1: Apply deadband to eliminate stick drift
+        // STEP 1: Apply SCALED deadband to eliminate stick drift with smooth transition
+        // Unlike a simple deadband that creates a "jump" at the threshold,
+        // scaled deadband remaps the remaining range (0.05 to 1.0) back to (0.0 to 1.0)
+        // This provides seamless control from stopped to full speed
         final double DEADBAND = 0.05;  // 5% deadband threshold
-        forward = applyDeadband(forward, DEADBAND);
-        strafe = applyDeadband(strafe, DEADBAND);
-        rotate = applyDeadband(rotate, DEADBAND);
+        forward = applyScaledDeadband(forward, DEADBAND);
+        strafe = applyScaledDeadband(strafe, DEADBAND);
+        rotate = applyScaledDeadband(rotate, DEADBAND);
 
-        // STEP 2: Calculate raw motor powers using mecanum drive formula
+        // STEP 2: Apply INPUT SHAPING for finer low-speed control
+        // Squaring the input (while preserving sign) creates a curved response:
+        // - Small stick movements → very small power (precise positioning)
+        // - Large stick movements → near full power (fast movement when needed)
+        // This is called "quadratic scaling" and is widely used in FTC/FRC
+        forward = shapeInput(forward);
+        strafe = shapeInput(strafe);
+        rotate = shapeInput(rotate);
+
+        // STEP 3: Apply strafe compensation
+        // Mecanum wheels strafe less efficiently due to roller friction
+        // Multiplying strafe input makes lateral movement feel equal to forward movement
+        strafe = strafe * STRAFE_MULTIPLIER;
+
+        // STEP 4: Calculate raw motor powers using mecanum drive formula
         double rawFrontLeft = forward + strafe + rotate;
         double rawFrontRight = forward - strafe - rotate;
         double rawBackLeft = forward - strafe + rotate;
         double rawBackRight = forward + strafe - rotate;
 
-        // STEP 3: Normalize to prevent clipping distortion
+        // STEP 5: Normalize to prevent clipping distortion
         // Find the maximum absolute value among all 4 motors
         // If max > 1.0, scale all down proportionally to preserve the ratio
         double maxPower = Math.max(1.0, Math.max(
@@ -484,14 +546,14 @@ public class PickleTeleOp extends OpMode {
         rawBackLeft /= maxPower;
         rawBackRight /= maxPower;
 
-        // STEP 4: Apply speed multiplier for normal/slow mode
+        // STEP 6: Apply speed multiplier for normal/slow mode
         double speedMultiplier = slowMode ? SLOW_DRIVE_SPEED : NORMAL_DRIVE_SPEED;
         frontLeftPower = rawFrontLeft * speedMultiplier;
         frontRightPower = rawFrontRight * speedMultiplier;
         backLeftPower = rawBackLeft * speedMultiplier;
         backRightPower = rawBackRight * speedMultiplier;
 
-        // STEP 5: Send calculated power to all 4 wheels
+        // STEP 7: Send calculated power to all 4 wheels
         frontLeft.setPower(frontLeftPower);
         frontRight.setPower(frontRightPower);
         backLeft.setPower(backLeftPower);
@@ -499,25 +561,64 @@ public class PickleTeleOp extends OpMode {
     }
 
     /*
-     * DEADBAND HELPER FUNCTION
+     * SCALED DEADBAND HELPER FUNCTION
      *
-     * Treats small joystick values as zero to prevent drift from stick noise.
+     * An improved deadband that eliminates the "jump" problem of simple deadbands.
      *
-     * How it works:
-     *   - If |value| < deadband → return 0.0 (ignore noise)
-     *   - Otherwise → return value as-is
+     * PROBLEM WITH SIMPLE DEADBAND:
+     * Simple deadband creates a discontinuity - the output jumps from 0 to 0.05
+     * the instant you cross the threshold. This feels jarring to drivers.
+     *
+     * HOW SCALED DEADBAND WORKS:
+     *   - If |value| < deadband → return 0.0 (ignore noise, same as simple)
+     *   - Otherwise → REMAP the range [deadband, 1.0] to [0.0, 1.0]
      *
      * Example with deadband = 0.05:
-     *   - Input: 0.03 → Output: 0.0 (robot stays still)
-     *   - Input: -0.04 → Output: 0.0 (robot stays still)
-     *   - Input: 0.8 → Output: 0.8 (normal movement)
-     *   - Input: -0.6 → Output: -0.6 (normal movement)
+     *   - Input: 0.03  → Output: 0.0 (below threshold)
+     *   - Input: 0.05  → Output: 0.0 (at threshold, smooth start)
+     *   - Input: 0.10  → Output: ~0.053 (smooth ramp-up)
+     *   - Input: 0.525 → Output: 0.5 (midpoint)
+     *   - Input: 1.0   → Output: 1.0 (full power)
+     *
+     * FORMULA: output = (|value| - deadband) / (1.0 - deadband) * sign(value)
      */
-    double applyDeadband(double value, double deadband) {
+    double applyScaledDeadband(double value, double deadband) {
         if (Math.abs(value) < deadband) {
             return 0.0;
         }
-        return value;
+        // Remap the remaining range [deadband, 1.0] to [0.0, 1.0]
+        // Math.copySign preserves the original sign (positive/negative)
+        return Math.copySign((Math.abs(value) - deadband) / (1.0 - deadband), value);
+    }
+
+    /*
+     * INPUT SHAPING HELPER FUNCTION (Quadratic Scaling)
+     *
+     * Creates a non-linear response curve for finer low-speed control.
+     *
+     * WHY USE INPUT SHAPING?
+     * Linear joystick response (input = output) makes precise movements difficult.
+     * Squaring the input gives you:
+     *   - Fine control at low speeds (great for alignment)
+     *   - Full power still available at max stick (for fast movement)
+     *
+     * HOW IT WORKS (squaring with sign preservation):
+     *   - Input: 0.1  → Output: 0.01 (10% stick = 1% power - very precise!)
+     *   - Input: 0.3  → Output: 0.09 (30% stick = 9% power)
+     *   - Input: 0.5  → Output: 0.25 (50% stick = 25% power)
+     *   - Input: 0.7  → Output: 0.49 (70% stick = 49% power)
+     *   - Input: 1.0  → Output: 1.0  (100% stick = 100% power)
+     *   - Input: -0.5 → Output: -0.25 (sign preserved for direction!)
+     *
+     * ALTERNATIVE CURVES:
+     * - Cubic (value³): Even more sensitive at low speeds
+     * - Square root (√value): More linear at low, compressed at high (rarely used)
+     *
+     * Math.copySign ensures negative inputs produce negative outputs.
+     */
+    double shapeInput(double value) {
+        // Square the magnitude, preserve the sign
+        return Math.copySign(value * value, value);
     }
 
     void launch(boolean shotRequested) {

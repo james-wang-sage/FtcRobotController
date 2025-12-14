@@ -35,7 +35,6 @@ package org.firstinspires.ftc.teamcode.pickle;
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -119,9 +118,11 @@ public class PickleAutoOp extends OpMode
     private ElapsedTime feederTimer = new ElapsedTime();
     private ElapsedTime driveTimer = new ElapsedTime();
 
-    // Declare OpMode members.
-    private DcMotor leftDrive = null;
-    private DcMotor rightDrive = null;
+    // Declare OpMode members - 4 mecanum drive motors (matching PickleTeleOp)
+    private DcMotor frontLeft = null;
+    private DcMotor frontRight = null;
+    private DcMotor backLeft = null;
+    private DcMotor backRight = null;
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
@@ -203,37 +204,52 @@ public class PickleAutoOp extends OpMode
          * Initialize the hardware variables. Note that the strings used here as parameters
          * to 'get' must correspond to the names assigned during the robot configuration
          * step (using the FTC Robot Controller app on the driver's station).
+         *
+         * REQUIRED HARDWARE CONFIGURATION (must match PickleTeleOp):
+         * - "front_left"    : DcMotor (mecanum drive motor, front left)
+         * - "front_right"   : DcMotor (mecanum drive motor, front right)
+         * - "back_left"     : DcMotor (mecanum drive motor, back left)
+         * - "back_right"    : DcMotor (mecanum drive motor, back right)
+         * - "launcher"      : DcMotorEx (high-speed launcher motor with encoder)
+         * - "left_feeder"   : CRServo (continuous rotation servo)
+         * - "right_feeder"  : CRServo (continuous rotation servo)
          */
-        leftDrive  = hardwareMap.get(DcMotor.class, "left_drive");
-        rightDrive = hardwareMap.get(DcMotor.class, "right_drive");
-        launcher = hardwareMap.get(DcMotorEx.class,"launcher");
+        frontLeft = hardwareMap.get(DcMotor.class, "front_left");
+        frontRight = hardwareMap.get(DcMotor.class, "front_right");
+        backLeft = hardwareMap.get(DcMotor.class, "back_left");
+        backRight = hardwareMap.get(DcMotor.class, "back_right");
+        launcher = hardwareMap.get(DcMotorEx.class, "launcher");
         leftFeeder = hardwareMap.get(CRServo.class, "left_feeder");
         rightFeeder = hardwareMap.get(CRServo.class, "right_feeder");
 
-
         /*
-         * To drive forward, most robots need the motor on one side to be reversed,
-         * because the axles point in opposite directions. Pushing the left stick forward
-         * MUST make the robot go forward. So, adjust these two lines based on your first test drive.
-         * Note: The settings here assume direct drive on left and right wheels. Gear
-         * Reduction or 90° drives may require direction flips
+         * MECANUM MOTOR DIRECTION SETUP (matching PickleTeleOp)
+         *
+         * For mecanum drive, motors on opposite sides spin in opposite directions to drive forward.
+         * The left side motors are reversed so that positive power to all motors moves the robot forward.
          */
-        leftDrive.setDirection(DcMotor.Direction.REVERSE);
-        rightDrive.setDirection(DcMotor.Direction.FORWARD);
+        frontLeft.setDirection(DcMotor.Direction.REVERSE);
+        backLeft.setDirection(DcMotor.Direction.REVERSE);
+        frontRight.setDirection(DcMotor.Direction.FORWARD);
+        backRight.setDirection(DcMotor.Direction.FORWARD);
 
         /*
          * Here we reset the encoders on our drive motors before we start moving.
          */
-        leftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        rightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
 
         /*
          * Setting zeroPowerBehavior to BRAKE enables a "brake mode." This causes the motor to
          * slow down much faster when it is coasting. This creates a much more controllable
          * drivetrain, as the robot stops much quicker.
          */
-        leftDrive.setZeroPowerBehavior(BRAKE);
-        rightDrive.setZeroPowerBehavior(BRAKE);
+        frontLeft.setZeroPowerBehavior(BRAKE);
+        frontRight.setZeroPowerBehavior(BRAKE);
+        backLeft.setZeroPowerBehavior(BRAKE);
+        backRight.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
 
         /*
@@ -347,8 +363,7 @@ public class PickleAutoOp extends OpMode
                     if(shotsToFire > 0) {
                         autonomousState = AutonomousState.LAUNCH;
                     } else {
-                        leftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                        rightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+                        resetDriveEncoders();
                         launcher.setVelocity(0);
                         autonomousState = AutonomousState.DRIVING_AWAY_FROM_GOAL;
                     }
@@ -362,8 +377,7 @@ public class PickleAutoOp extends OpMode
                  * Once the function returns "true" we reset the encoders again and move on.
                  */
                 if(drive(DRIVE_SPEED, -4, DistanceUnit.INCH, 1)){
-                    leftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    rightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+                    resetDriveEncoders();
                     autonomousState = AutonomousState.ROTATING;
                 }
                 break;
@@ -376,8 +390,7 @@ public class PickleAutoOp extends OpMode
                 }
 
                 if(rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES,1)){
-                    leftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    rightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+                    resetDriveEncoders();
                     autonomousState = AutonomousState.DRIVING_OFF_LINE;
                 }
                 break;
@@ -399,10 +412,12 @@ public class PickleAutoOp extends OpMode
          */
         telemetry.addData("AutoState", autonomousState);
         telemetry.addData("LauncherState", launchState);
-        telemetry.addData("Motor Current Positions", "left (%d), right (%d)",
-                leftDrive.getCurrentPosition(), rightDrive.getCurrentPosition());
-        telemetry.addData("Motor Target Positions", "left (%d), right (%d)",
-                leftDrive.getTargetPosition(), rightDrive.getTargetPosition());
+        telemetry.addData("Front Motors Current", "L:%d  R:%d",
+                frontLeft.getCurrentPosition(), frontRight.getCurrentPosition());
+        telemetry.addData("Back Motors Current", "L:%d  R:%d",
+                backLeft.getCurrentPosition(), backRight.getCurrentPosition());
+        telemetry.addData("Front Motors Target", "L:%d  R:%d",
+                frontLeft.getTargetPosition(), frontRight.getTargetPosition());
 
         // Display AprilTag detection information
         telemetryAprilTag();
@@ -462,8 +477,11 @@ public class PickleAutoOp extends OpMode
     }
 
     /**
+     * Drives the robot straight forward or backward using all 4 mecanum motors.
+     * For mecanum drive, all 4 motors move in the same direction for straight driving.
+     *
      * @param speed From 0-1
-     * @param distance In specified unit
+     * @param distance In specified unit (positive = forward, negative = backward)
      * @param distanceUnit the unit of measurement for distance
      * @param holdSeconds the number of seconds to wait at position before returning true.
      * @return "true" if the motors are within tolerance of the target position for more than
@@ -482,14 +500,21 @@ public class PickleAutoOp extends OpMode
          */
         double targetPosition = (distanceUnit.toMm(distance) * TICKS_PER_MM);
 
-        leftDrive.setTargetPosition((int) targetPosition);
-        rightDrive.setTargetPosition((int) targetPosition);
+        // For mecanum drive, all 4 motors go to the same position for straight driving
+        frontLeft.setTargetPosition((int) targetPosition);
+        frontRight.setTargetPosition((int) targetPosition);
+        backLeft.setTargetPosition((int) targetPosition);
+        backRight.setTargetPosition((int) targetPosition);
 
-        leftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        rightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
 
-        leftDrive.setPower(speed);
-        rightDrive.setPower(speed);
+        frontLeft.setPower(speed);
+        frontRight.setPower(speed);
+        backLeft.setPower(speed);
+        backRight.setPower(speed);
 
         /*
          * Here we check if we are within tolerance of our target position or not. We calculate the
@@ -497,8 +522,10 @@ public class PickleAutoOp extends OpMode
          * and compare that to our tolerance. If we have not reached our target yet, then we reset
          * the driveTimer. Only after we reach the target can the timer count higher than our
          * holdSeconds variable.
+         *
+         * We use the front left motor as the reference for position checking.
          */
-        if(Math.abs(targetPosition - leftDrive.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
+        if(Math.abs(targetPosition - frontLeft.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
             driveTimer.reset();
         }
 
@@ -506,8 +533,11 @@ public class PickleAutoOp extends OpMode
     }
 
     /**
+     * Rotates the robot in place using all 4 mecanum motors.
+     * For rotation, left side motors go opposite direction from right side motors.
+     *
      * @param speed From 0-1
-     * @param angle the amount that the robot should rotate
+     * @param angle the amount that the robot should rotate (positive = clockwise when viewed from above)
      * @param angleUnit the unit that angle is in
      * @param holdSeconds the number of seconds to wait at position before returning true.
      * @return True if the motors are within tolerance of the target position for more than
@@ -528,26 +558,45 @@ public class PickleAutoOp extends OpMode
         double targetMm = angleUnit.toRadians(angle)*(TRACK_WIDTH_MM/2);
 
         /*
-         * We need to set the left motor to the inverse of the target so that we rotate instead
-         * of driving straight.
+         * For rotation, left side motors go in the opposite direction from right side motors.
+         * This is the same for mecanum as it was for tank drive.
          */
         double leftTargetPosition = -(targetMm*TICKS_PER_MM);
         double rightTargetPosition = targetMm*TICKS_PER_MM;
 
-        leftDrive.setTargetPosition((int) leftTargetPosition);
-        rightDrive.setTargetPosition((int) rightTargetPosition);
+        // Set target positions - left side negative, right side positive for rotation
+        frontLeft.setTargetPosition((int) leftTargetPosition);
+        backLeft.setTargetPosition((int) leftTargetPosition);
+        frontRight.setTargetPosition((int) rightTargetPosition);
+        backRight.setTargetPosition((int) rightTargetPosition);
 
-        leftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        rightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
 
-        leftDrive.setPower(speed);
-        rightDrive.setPower(speed);
+        frontLeft.setPower(speed);
+        frontRight.setPower(speed);
+        backLeft.setPower(speed);
+        backRight.setPower(speed);
 
-        if((Math.abs(leftTargetPosition - leftDrive.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
+        // Check if front left motor is within tolerance
+        if((Math.abs(leftTargetPosition - frontLeft.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
             driveTimer.reset();
         }
 
         return (driveTimer.seconds() > holdSeconds);
+    }
+
+    /**
+     * Helper method to reset encoders on all 4 drive motors.
+     * This is called between autonomous state transitions to prepare for the next movement.
+     */
+    private void resetDriveEncoders() {
+        frontLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
     }
 
     /**

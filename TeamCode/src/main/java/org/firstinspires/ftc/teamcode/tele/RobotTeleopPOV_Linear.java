@@ -29,6 +29,7 @@
 
 package org.firstinspires.ftc.teamcode.tele;
 
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -48,6 +49,7 @@ import com.qualcomm.robotcore.util.Range;
  */
 
 @TeleOp(name="Robot: Teleop POV", group="Robot")
+@Disabled
 public class RobotTeleopPOV_Linear extends LinearOpMode {
 
     /* Declare OpMode members. */

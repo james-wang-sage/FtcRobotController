@@ -31,6 +31,7 @@ package org.firstinspires.ftc.teamcode.basic;
 
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -68,6 +69,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  */
 
 @TeleOp(name="Enhanced 2-Motor Drive", group="TeamCode")
+@Disabled
 public class BasicOmniOpMode_Linear extends LinearOpMode {
 
     // Speed control multipliers

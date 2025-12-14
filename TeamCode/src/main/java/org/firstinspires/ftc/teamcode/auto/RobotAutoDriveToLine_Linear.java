@@ -30,6 +30,7 @@
 package org.firstinspires.ftc.teamcode.auto;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
@@ -60,6 +61,7 @@ import com.qualcomm.robotcore.hardware.SwitchableLight;
  */
 
 @Autonomous(name="Robot: Auto Drive To Line", group="Robot")
+@Disabled
 public class RobotAutoDriveToLine_Linear extends LinearOpMode {
 
     /* Declare OpMode members. */

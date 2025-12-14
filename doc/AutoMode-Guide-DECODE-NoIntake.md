@@ -17,6 +17,7 @@ This guide documents a practical 30-second autonomous approach for a **launcher-
 
 This is written to match typical implementations in this repo, especially:
 - `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleAutoOp.java`
+- `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleHardwareNames.java`
 - AprilTag examples like `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/auto/RobotAutoDriveToAprilTagTank.java`
 
 ---
@@ -43,6 +44,13 @@ Your field has (at least) two relevant tag “roles”:
 Fallback (more robust once you know IDs at your event):
 - Maintain a whitelist set of goal-tag IDs and only accept detections with IDs in that set.
 
+### Hardware Name Consistency (recommended)
+
+FTC hardware devices are looked up by **string name** from the Driver Station configuration. To avoid typos and drift
+between Auto/TeleOp, keep all device names in one place:
+
+- `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleHardwareNames.java`
+
 ---
 
 ## Recommended Auto Flow (No Intake)
@@ -64,12 +72,12 @@ Fallback (more robust once you know IDs at your event):
 
 Use an enum-driven state machine (iterative `OpMode`) or sequential blocks (`LinearOpMode`):
 
-- `SELECT_ALLIANCE` (usually in init)
+- `START_DELAY` (optional; partner de-conflict)
 - `DRIVE_CLEAR_START`
 - `TURN_TOWARD_GOAL`
-- `APPROACH_CLOSE_SHOT`
-- `ALIGN_WITH_GOAL_TAG` (only if goal tag visible)
-- `SHOOT_PRELOADS`
+- `DRIVE_TO_CLOSE_SHOT`
+- `ALIGN_WITH_GOAL_TAG` (time-bounded; ignores Obelisk tags; falls back if no goal tag visible)
+- `REQUEST_SHOT` / `WAIT_FOR_SHOT` (repeat 3x)
 - `PARK_FOR_TELEOP`
 - `COMPLETE`
 
@@ -91,6 +99,18 @@ Practical approach:
 
 ---
 
+## Partner Collision Avoidance (with current hardware)
+
+With encoders + AprilTags, you still can’t reliably detect and avoid another robot. The safest approach is coordination
+and deterministic paths:
+
+- Agree pre-match who “owns” the goal approach lane in auto.
+- Add an optional start delay so only one robot enters the goal area first.
+- Keep a “safe auto” option that just clears the start area and parks (no goal approach).
+- Approach the goal at reduced speed for the final segment.
+
+---
+
 ## AprilTag Alignment (Goal Tag Only)
 
 ### What to Use from the Detection
@@ -107,6 +127,17 @@ Recommended rule:
 - If `detection.metadata == null`: ignore (unknown tag)
 - Else if `detection.metadata.name` contains `"Obelisk"`: ignore for navigation
 - Else: accept as a goal tag candidate
+
+### Practical Alignment Pattern (recommended)
+
+For predictability, prefer small “nudges” over continuous closed-loop driving:
+
+- If bearing error is large, do a small turn nudge (encoder-based rotate).
+- Else if range error is large, do a small forward/back nudge (encoder-based drive).
+- Stop after a short time budget and shoot even if the tag is lost.
+
+If the robot turns the wrong direction during alignment (camera mounting/orientation), add a single “invert turn” switch
+in code and flip it at the field.
 
 ### Fallback When No Goal Tag Is Visible
 
@@ -138,8 +169,8 @@ If you’re unsure at an event:
 
 ## Tuning Checklist (Do This on a Field)
 
-- Measure and tune `DRIVE_CLEAR_START` distance so you don’t clip the wall/props.
-- Tune the mirrored turn angle for Red vs Blue (start with a coarse angle, then refine).
+- Measure and tune the “clear start” distance (example code constant: `DRIVE_CLEAR_START_IN`) so you don’t clip the wall/props.
+- Tune the mirrored turn angle (example code constant: `TURN_TOWARD_GOAL_DEG`) for Red vs Blue.
 - Tune your “close shot” waypoint:
   - Does it consistently see the goal tag?
   - Is the launcher accurate at that distance?
@@ -161,5 +192,6 @@ If you’re unsure at an event:
 
 ## Next Step (If You Want Code Changes)
 
-If you want, I can refactor `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleAutoOp.java` to follow this sequence (drive → align → shoot → park) and add a goal-tag-only filter using `detection.metadata.name`.
-
+Current status in this repo:
+- `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleAutoOp.java` implements drive → (optional goal-tag align) → shoot → park.
+- `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/pickle/PickleHardwareNames.java` keeps device-name strings consistent across Auto/TeleOp.

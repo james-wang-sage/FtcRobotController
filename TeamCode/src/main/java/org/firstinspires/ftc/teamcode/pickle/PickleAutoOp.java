@@ -58,8 +58,11 @@ import java.util.List;
  * system for robot mobility, one high-speed motor driving two "launcher wheels," and two servos
  * which feed that launcher.
  *
- * This robot starts up against the goal and launches all three projectiles before driving away
- * off the starting line.
+ * STRATEGY (launcher-only / no intake):
+ * - Drive away from the starting corner and into a known "close shot" pose near the goal
+ * - Optionally use the GOAL AprilTag for final alignment (ignore Obelisk/motif tags)
+ * - Launch 3 preloaded artifacts with a consistent cadence
+ * - End in a TeleOp-friendly position (do not block partner paths)
  *
  * This program leverages a "state machine" - an Enum which captures the state of the robot
  * at any time. As it moves through the autonomous period and completes different functions,
@@ -105,6 +108,71 @@ public class PickleAutoOp extends OpMode
     final double TICKS_PER_MM = (ENCODER_TICKS_PER_REV / (WHEEL_DIAMETER_MM * Math.PI));
     final double TRACK_WIDTH_MM = 404;
 
+    /*
+     * ========== AUTONOMOUS TUNING VALUES ==========
+     *
+     * These values must be tuned on a real field. They are intentionally easy-to-find constants
+     * because early autonomous success comes from repeatability and quick iteration.
+     *
+     * IMPORTANT: With the current hardware, we do NOT have a reliable way to detect other robots.
+     * Collision avoidance must be handled by:
+     * - pre-match coordination (who uses the goal lane)
+     * - lane separation (non-intersecting paths)
+     * - optional start delay (stagger timing)
+     */
+
+    /*
+     * Optional delay at the start of autonomous. This is useful when coordinating with a partner
+     * so both robots do not try to enter the goal area at the same time.
+     *
+     * Set to 0 to disable.
+     */
+    final double START_DELAY_SECONDS = 0.0;
+
+    /*
+     * Drive away from the starting corner so we are clear of the wall/traffic before turning.
+     * Positive distance = forward (as defined by motor direction setup).
+     */
+    final double DRIVE_CLEAR_START_IN = 18.0;
+
+    /*
+     * After clearing the start, rotate toward the goal. Sign is mirrored by alliance.
+     * Existing code convention:
+     * - RED  uses +45 degrees
+     * - BLUE uses -45 degrees
+     */
+    final double TURN_TOWARD_GOAL_DEG = 45.0;
+
+    /*
+     * Drive from the "cleared start" position to a close shooting position near the goal.
+     * This should put the goal generally in view and within a short AprilTag alignment distance.
+     */
+    final double DRIVE_TO_CLOSE_SHOT_IN = 36.0;
+
+    /*
+     * Final parking move after shooting (TeleOp-ready). Negative drives backward.
+     * Tune this so you are out of the goal lane and not blocking your partner.
+     */
+    final double PARK_BACKUP_IN = -12.0;
+
+    /*
+     * AprilTag-based "final align" tuning. This is deliberately conservative:
+     * - short timeout so we don't waste all of auto if the goal tag is not visible
+     * - small incremental nudges using encoders so behavior is predictable
+     */
+    final double GOAL_ALIGN_MAX_SECONDS = 1.5;
+    final double GOAL_ALIGN_DESIRED_RANGE_IN = 10.0;
+    final double GOAL_ALIGN_RANGE_TOL_IN = 2.0;
+    final double GOAL_ALIGN_BEARING_TOL_DEG = 2.0;
+    final double GOAL_ALIGN_TURN_STEP_DEG = 5.0;
+    final double GOAL_ALIGN_DRIVE_STEP_IN = 3.0;
+
+    /*
+     * If the robot turns the wrong way during tag alignment, flip this.
+     * (Different camera mounting orientations can invert the observed bearing.)
+     */
+    final boolean INVERT_TAG_TURN = false;
+
     int shotsToFire = 3; //The number of shots to fire in this auto.
 
     double robotRotationAngle = 45;
@@ -117,6 +185,7 @@ public class PickleAutoOp extends OpMode
     private ElapsedTime shotTimer = new ElapsedTime();
     private ElapsedTime feederTimer = new ElapsedTime();
     private ElapsedTime driveTimer = new ElapsedTime();
+    private ElapsedTime stateTimer = new ElapsedTime();
 
     // Declare OpMode members - 4 mecanum drive motors (matching PickleTeleOp)
     private DcMotor frontLeft = null;
@@ -163,15 +232,32 @@ public class PickleAutoOp extends OpMode
      * Here is our auto state machine enum. This captures each action we'd like to do in auto.
      */
     private enum AutonomousState {
-        LAUNCH,
-        WAIT_FOR_LAUNCH,
-        DRIVING_AWAY_FROM_GOAL,
-        ROTATING,
-        DRIVING_OFF_LINE,
+        START_DELAY,
+        DRIVE_CLEAR_START,
+        TURN_TOWARD_GOAL,
+        DRIVE_TO_CLOSE_SHOT,
+        ALIGN_WITH_GOAL_TAG,
+        REQUEST_SHOT,
+        WAIT_FOR_SHOT,
+        PARK_FOR_TELEOP,
         COMPLETE;
     }
 
     private AutonomousState autonomousState;
+
+    /*
+     * Small internal alignment state. We keep it separate from AutonomousState to avoid creating
+     * lots of tiny "ALIGN_TURNING", "ALIGN_DRIVING", etc. states.
+     */
+    private enum GoalAlignAction {
+        NONE,
+        TURN_NUDGE,
+        DRIVE_NUDGE,
+    }
+
+    private GoalAlignAction goalAlignAction = GoalAlignAction.NONE;
+    private double goalAlignNudgeAngleDeg = 0.0;
+    private double goalAlignNudgeDistanceIn = 0.0;
 
     /*
      * Here we create an enum not to create a state machine, but to capture which alliance we are on.
@@ -196,8 +282,9 @@ public class PickleAutoOp extends OpMode
          * Later in our code, we will progress through the state machine by moving to other enum members.
          * We do the same for our launcher state machine, setting it to IDLE before we use it later.
          */
-        autonomousState = AutonomousState.LAUNCH;
+        autonomousState = AutonomousState.START_DELAY;
         launchState = LaunchState.IDLE;
+        goalAlignAction = GoalAlignAction.NONE;
 
 
         /*
@@ -214,13 +301,13 @@ public class PickleAutoOp extends OpMode
          * - "left_feeder"   : CRServo (continuous rotation servo)
          * - "right_feeder"  : CRServo (continuous rotation servo)
          */
-        frontLeft = hardwareMap.get(DcMotor.class, "front_left");
-        frontRight = hardwareMap.get(DcMotor.class, "front_right");
-        backLeft = hardwareMap.get(DcMotor.class, "back_left");
-        backRight = hardwareMap.get(DcMotor.class, "back_right");
-        launcher = hardwareMap.get(DcMotorEx.class, "launcher");
-        leftFeeder = hardwareMap.get(CRServo.class, "left_feeder");
-        rightFeeder = hardwareMap.get(CRServo.class, "right_feeder");
+        frontLeft = hardwareMap.get(DcMotor.class, PickleHardwareNames.FRONT_LEFT_MOTOR);
+        frontRight = hardwareMap.get(DcMotor.class, PickleHardwareNames.FRONT_RIGHT_MOTOR);
+        backLeft = hardwareMap.get(DcMotor.class, PickleHardwareNames.BACK_LEFT_MOTOR);
+        backRight = hardwareMap.get(DcMotor.class, PickleHardwareNames.BACK_RIGHT_MOTOR);
+        launcher = hardwareMap.get(DcMotorEx.class, PickleHardwareNames.LAUNCHER_MOTOR);
+        leftFeeder = hardwareMap.get(CRServo.class, PickleHardwareNames.LEFT_FEEDER_SERVO);
+        rightFeeder = hardwareMap.get(CRServo.class, PickleHardwareNames.RIGHT_FEEDER_SERVO);
 
         /*
          * MECANUM MOTOR DIRECTION SETUP (matching PickleTeleOp)
@@ -316,6 +403,16 @@ public class PickleAutoOp extends OpMode
      */
     @Override
     public void start() {
+        // Reset any timers that should start counting at the beginning of autonomous.
+        stateTimer.reset();
+        driveTimer.reset();
+        shotTimer.reset();
+        feederTimer.reset();
+
+        // Reset stateful variables in case we INIT/START multiple times without power-cycling.
+        shotsToFire = 3;
+        goalAlignAction = GoalAlignAction.NONE;
+        resetDriveEncoders();
     }
 
     /*
@@ -334,69 +431,174 @@ public class PickleAutoOp extends OpMode
          */
         switch (autonomousState){
             /*
-             * Since the first state of our auto is LAUNCH, this is the first "case" we encounter.
-             * This case is very simple. We call our .launch() function with "true" in the parameter.
-             * This "true" value informs our launch function that we'd like to start the process of
-             * firing a shot. We will call this function with a "false" in the next case. This
-             * "false" condition means that we are continuing to call the function every loop,
-             * allowing it to cycle through and continue the process of launching the first ball.
+             * Optional wait at the beginning of auto. This is a simple and reliable way to avoid
+             * collisions with a partner robot when both teams want to use the same scoring lane.
              */
-            case LAUNCH:
-                launch(true);
-                autonomousState = AutonomousState.WAIT_FOR_LAUNCH;
+            case START_DELAY:
+                if (stateTimer.seconds() >= START_DELAY_SECONDS) {
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    stateTimer.reset();
+                    autonomousState = AutonomousState.DRIVE_CLEAR_START;
+                }
                 break;
 
-            case WAIT_FOR_LAUNCH:
-                /*
-                 * A technique we leverage frequently in this code are functions which return a
-                 * boolean. We are using this function in two ways. This function actually moves the
-                 * motors and servos in a way that launches the ball, but it also "talks back" to
-                 * our main loop by returning either "true" or "false". We've written it so that
-                 * after the shot we requested has been fired, the function will return "true" for
-                 * one cycle. Once the launch function returns "true", we proceed in the code, removing
-                 * one from the shotsToFire variable. If shots remain, we move back to the LAUNCH
-                 * state on our state machine. Otherwise, we reset the encoders on our drive motors
-                 * and move onto the next state.
-                 */
-                if(launch(false)) {
-                    shotsToFire -= 1;
-                    if(shotsToFire > 0) {
-                        autonomousState = AutonomousState.LAUNCH;
-                    } else {
+            /*
+             * Step 1: Drive away from the starting corner.
+             * Goal: get clear of the wall and initial traffic before turning toward the goal.
+             */
+            case DRIVE_CLEAR_START:
+                if (drive(DRIVE_SPEED, DRIVE_CLEAR_START_IN, DistanceUnit.INCH, 0.25)) {
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    autonomousState = AutonomousState.TURN_TOWARD_GOAL;
+                }
+                break;
+
+            /*
+             * Step 2: Turn toward the goal. We mirror the sign based on alliance so the path is
+             * symmetrical for red vs blue.
+             */
+            case TURN_TOWARD_GOAL:
+                robotRotationAngle = (alliance == Alliance.RED) ? TURN_TOWARD_GOAL_DEG : -TURN_TOWARD_GOAL_DEG;
+                if (rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES, 0.25)) {
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    autonomousState = AutonomousState.DRIVE_TO_CLOSE_SHOT;
+                }
+                break;
+
+            /*
+             * Step 3: Drive to a close, repeatable shooting position near the goal.
+             * We use a slower approach speed near the goal area to reduce impact risk.
+             */
+            case DRIVE_TO_CLOSE_SHOT:
+                if (drive(0.30, DRIVE_TO_CLOSE_SHOT_IN, DistanceUnit.INCH, 0.25)) {
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    stateTimer.reset();
+                    goalAlignAction = GoalAlignAction.NONE;
+                    autonomousState = AutonomousState.ALIGN_WITH_GOAL_TAG;
+                }
+                break;
+
+            /*
+             * Step 4 (optional): Final alignment using the GOAL AprilTag only.
+             *
+             * Important details:
+             * - We intentionally ignore "Obelisk" tags because they are not intended for localization.
+             * - If the goal tag is not visible quickly, we stop trying and shoot from our dead-reckoned pose.
+             * - Alignment is implemented as small "nudge" moves using encoders for predictability.
+             */
+            case ALIGN_WITH_GOAL_TAG: {
+                if (stateTimer.seconds() > GOAL_ALIGN_MAX_SECONDS) {
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    goalAlignAction = GoalAlignAction.NONE;
+                    autonomousState = AutonomousState.REQUEST_SHOT;
+                    break;
+                }
+
+                AprilTagDetection goalTag = getGoalDetection();
+                if (goalTag == null) {
+                    // Do nothing: keep the robot still and keep looking for the goal tag.
+                    // If you want a "search", do it with caution (slow sweep) to avoid collisions.
+                    break;
+                }
+
+                if (goalAlignAction == GoalAlignAction.TURN_NUDGE) {
+                    if (rotate(ROTATE_SPEED, goalAlignNudgeAngleDeg, AngleUnit.DEGREES, 0.15)) {
                         resetDriveEncoders();
+                        driveTimer.reset();
+                        goalAlignAction = GoalAlignAction.NONE;
+                    }
+                    break;
+                }
+
+                if (goalAlignAction == GoalAlignAction.DRIVE_NUDGE) {
+                    if (drive(0.25, goalAlignNudgeDistanceIn, DistanceUnit.INCH, 0.15)) {
+                        resetDriveEncoders();
+                        driveTimer.reset();
+                        goalAlignAction = GoalAlignAction.NONE;
+                    }
+                    break;
+                }
+
+                // Decide what nudge to perform next based on the current detection.
+                double bearingDeg = goalTag.ftcPose.bearing;
+                double rangeIn = goalTag.ftcPose.range;
+
+                /*
+                 * The SDK's bearing convention depends on camera orientation. The intent is:
+                 * - If the tag is left of center, rotate left to center it.
+                 * - If the tag is right of center, rotate right to center it.
+                 *
+                 * If you see the robot turning away from the tag, flip INVERT_TAG_TURN above.
+                 */
+                if (Math.abs(bearingDeg) > GOAL_ALIGN_BEARING_TOL_DEG) {
+                    double nudge = -Math.copySign(GOAL_ALIGN_TURN_STEP_DEG, bearingDeg);
+                    if (INVERT_TAG_TURN) {
+                        nudge = -nudge;
+                    }
+                    goalAlignNudgeAngleDeg = nudge;
+                    goalAlignAction = GoalAlignAction.TURN_NUDGE;
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    break;
+                }
+
+                double rangeErrorIn = rangeIn - GOAL_ALIGN_DESIRED_RANGE_IN;
+                if (Math.abs(rangeErrorIn) > GOAL_ALIGN_RANGE_TOL_IN) {
+                    double nudge = Math.copySign(GOAL_ALIGN_DRIVE_STEP_IN, rangeErrorIn);
+                    // Positive nudge drives forward if we are too far; negative drives backward if too close.
+                    goalAlignNudgeDistanceIn = nudge;
+                    goalAlignAction = GoalAlignAction.DRIVE_NUDGE;
+                    resetDriveEncoders();
+                    driveTimer.reset();
+                    break;
+                }
+
+                // We are close enough in both heading and distance: proceed to shooting.
+                resetDriveEncoders();
+                driveTimer.reset();
+                goalAlignAction = GoalAlignAction.NONE;
+                autonomousState = AutonomousState.REQUEST_SHOT;
+                break;
+            }
+
+            /*
+             * Step 5: Shoot the 3 preloaded artifacts.
+             *
+             * Implementation detail:
+             * - REQUEST_SHOT requests one shot (kick off launch state machine).
+             * - WAIT_FOR_SHOT keeps calling launch(false) until that shot finishes.
+             * - When a shot finishes, we decrement shotsToFire and repeat until we hit 0.
+             */
+            case REQUEST_SHOT:
+                launch(true);
+                autonomousState = AutonomousState.WAIT_FOR_SHOT;
+                break;
+
+            case WAIT_FOR_SHOT:
+                if (launch(false)) {
+                    shotsToFire -= 1;
+                    if (shotsToFire > 0) {
+                        autonomousState = AutonomousState.REQUEST_SHOT;
+                    } else {
                         launcher.setVelocity(0);
-                        autonomousState = AutonomousState.DRIVING_AWAY_FROM_GOAL;
+                        resetDriveEncoders();
+                        driveTimer.reset();
+                        autonomousState = AutonomousState.PARK_FOR_TELEOP;
                     }
                 }
                 break;
 
-            case DRIVING_AWAY_FROM_GOAL:
-                /*
-                 * This is another function that returns a boolean. This time we return "true" if
-                 * the robot has been within a tolerance of the target position for "holdSeconds."
-                 * Once the function returns "true" we reset the encoders again and move on.
-                 */
-                if(drive(DRIVE_SPEED, -4, DistanceUnit.INCH, 1)){
-                    resetDriveEncoders();
-                    autonomousState = AutonomousState.ROTATING;
-                }
-                break;
-
-            case ROTATING:
-                if(alliance == Alliance.RED){
-                    robotRotationAngle = 45;
-                } else if (alliance == Alliance.BLUE){
-                    robotRotationAngle = -45;
-                }
-
-                if(rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES,1)){
-                    resetDriveEncoders();
-                    autonomousState = AutonomousState.DRIVING_OFF_LINE;
-                }
-                break;
-
-            case DRIVING_OFF_LINE:
-                if(drive(DRIVE_SPEED, -26, DistanceUnit.INCH, 1)){
+            /*
+             * Step 6: Park / reposition for TeleOp.
+             * This is intentionally a simple, predictable move.
+             */
+            case PARK_FOR_TELEOP:
+                if (drive(0.35, PARK_BACKUP_IN, DistanceUnit.INCH, 0.25)) {
                     autonomousState = AutonomousState.COMPLETE;
                 }
                 break;
@@ -412,6 +614,7 @@ public class PickleAutoOp extends OpMode
          */
         telemetry.addData("AutoState", autonomousState);
         telemetry.addData("LauncherState", launchState);
+        telemetry.addData("Alliance", alliance);
         telemetry.addData("Front Motors Current", "L:%d  R:%d",
                 frontLeft.getCurrentPosition(), frontRight.getCurrentPosition());
         telemetry.addData("Back Motors Current", "L:%d  R:%d",
@@ -612,7 +815,7 @@ public class PickleAutoOp extends OpMode
         // Create the vision portal using easy defaults with a webcam.
         // The webcam name must match the configuration in the Driver Station.
         visionPortal = VisionPortal.easyCreateWithDefaults(
-                hardwareMap.get(WebcamName.class, "Webcam 1"), aprilTag);
+                hardwareMap.get(WebcamName.class, PickleHardwareNames.WEBCAM_NAME), aprilTag);
     }
 
     /**
@@ -623,6 +826,15 @@ public class PickleAutoOp extends OpMode
     private void telemetryAprilTag() {
         List<AprilTagDetection> currentDetections = aprilTag.getDetections();
         telemetry.addData("# AprilTags Detected", currentDetections.size());
+
+        AprilTagDetection goalTag = getGoalDetection();
+        if (goalTag != null && goalTag.metadata != null) {
+            telemetry.addLine(String.format("GOAL TAG: (ID %d) %s", goalTag.id, goalTag.metadata.name));
+            telemetry.addLine(String.format("Goal RBE: %6.1f %6.1f %6.1f (inch, deg, deg)",
+                    goalTag.ftcPose.range, goalTag.ftcPose.bearing, goalTag.ftcPose.elevation));
+        } else {
+            telemetry.addLine("GOAL TAG: not visible");
+        }
 
         // Step through the list of detections and display info for each one.
         for (AprilTagDetection detection : currentDetections) {
@@ -673,7 +885,41 @@ public class PickleAutoOp extends OpMode
         }
         return null;
     }
+
+    /**
+     * Returns the best "goal" AprilTag detection to use for navigation, or null if none are visible.
+     *
+     * Why this exists:
+     * - DECODE fields include tags on the Obelisk (motif/pattern) and tags on/near the Goal.
+     * - The Obelisk tags should not be used for localization to approach the Goal.
+     *
+     * Selection rule (simple and effective):
+     * - Ignore detections that have no metadata (unknown tag).
+     * - Ignore detections whose metadata name contains "Obelisk".
+     * - From the remaining detections, pick the one with the smallest range (closest visible goal tag).
+     */
+    private AprilTagDetection getGoalDetection() {
+        if (aprilTag == null) {
+            return null;
+        }
+        List<AprilTagDetection> detections = aprilTag.getDetections();
+        AprilTagDetection best = null;
+        double bestRange = Double.POSITIVE_INFINITY;
+
+        for (AprilTagDetection detection : detections) {
+            if (detection.metadata == null || detection.metadata.name == null) {
+                continue;
+            }
+            String name = detection.metadata.name;
+            if (name.toLowerCase().contains("obelisk")) {
+                continue;
+            }
+            if (detection.ftcPose != null && detection.ftcPose.range < bestRange) {
+                best = detection;
+                bestRange = detection.ftcPose.range;
+            }
+        }
+        return best;
+    }
 }
-
-
 

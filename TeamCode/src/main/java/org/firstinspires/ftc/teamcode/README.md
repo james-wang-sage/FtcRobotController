@@ -21,51 +21,98 @@ teamcode/
 
 ### **pickle/PickleTeleOp.java** ✅ ENABLED
 **Type:** TeleOp (Driver-Controlled)
-**Display Name:** "StarterBotTeleop"
+**Display Name:** "PickleTeleOp"
 **Package:** `org.firstinspires.ftc.teamcode.pickle`
 
 **Purpose:** Team's main competition driver control program for DECODE (2025-2026) season
 
 **Features:**
-- 2-motor differential/tank drive with mecanum wheels (left_drive, right_drive)
+- **4-motor mecanum drive** with full omnidirectional movement (strafe, rotate, drive)
 - High-speed launcher motor with velocity control
 - Two continuous rotation servos for feeding projectiles
 - State machine for launch sequence management
+- **Auto-align to goal** using IMU (hold L1/left trigger)
+- Alliance selection (X=Blue, B=Red) during init
 - BRAKE mode for precise stopping
 - RUN_USING_ENCODER for consistent speed control
 - Custom PIDF coefficients for launcher optimization
-- **Arcade-style controls** (left stick forward/back, right stick rotate)
+- Input shaping (quadratic) for fine low-speed control
+- Scaled deadband to eliminate joystick drift
+
+**Speed Settings:**
+- Normal Mode: **100%** power (full speed for competition)
+- Slow Mode: **30%** power (toggle with Left Bumper for precision)
+
+**Motor Direction Configuration:**
+- Left motors (front_left, back_left): `FORWARD`
+- Right motors (front_right, back_right): `REVERSE`
 
 **Controls:**
 - Left Stick Y: Forward/Backward
+- Left Stick X: Strafe (side-to-side)
 - Right Stick X: Rotation
+- Left Bumper: Toggle slow mode (30% speed)
+- Left Trigger: Auto-align to goal
 - Y Button: Spin up launcher to target velocity
-- B Button: Stop launcher
+- B Button: Stop launcher / Select RED alliance (during init)
+- X Button: Select BLUE alliance (during init)
 - Right Bumper: Fire projectile
 
 **Hardware Requirements:**
-- Motors: `left_drive`, `right_drive`, `launcher`
+- Motors: `front_left`, `front_right`, `back_left`, `back_right`, `launcher`
 - Servos: `left_feeder`, `right_feeder`
-
-**Note:** Uses 2-motor tank drive with mecanum wheels (no strafing - requires 4 motors for full omnidirectional movement)
+- IMU: `imu` (built into Control Hub)
 
 ---
 
 ### **pickle/PickleAutoOp.java** ✅ ENABLED
 **Type:** Autonomous
-**Display Name:** "StarterBotAuto"
+**Display Name:** "PickleAutoOp"
 **Package:** `org.firstinspires.ftc.teamcode.pickle`
 
-**Purpose:** Team's competition autonomous routine
+**Purpose:** Team's primary competition autonomous routine (encoder-based)
 
 **What It Does:**
-- Starts up against the goal
-- Launches all three projectiles using state machine
-- Drives away from starting line
-- Uses encoder-based distance measurement
-- Sequential state machine for reliable execution
+1. Optional start delay (for partner coordination)
+2. Drive clear of starting corner
+3. Turn toward goal (mirrored by alliance)
+4. Drive to shooting position
+5. Align with goal using AprilTag (if visible)
+6. Launch 3 projectiles
+7. Park for TeleOp-friendly position
 
-**Hardware Requirements:** Same as PickleTeleOp
+**Speed Settings:**
+- Drive Speed: **80%** power
+- Rotate Speed: 20% power
+- Approach Speed: 30% power (near goal)
+
+**Motor Direction Configuration:** Same as PickleTeleOp
+
+**Hardware Requirements:** Same as PickleTeleOp + Webcam
+
+---
+
+### **pickle/PickleAutoHolonomic.java** ✅ ENABLED
+**Type:** Autonomous
+**Display Name:** "PickleAutoHolonomic"
+**Package:** `org.firstinspires.ftc.teamcode.pickle`
+
+**Purpose:** Advanced autonomous with sensor fusion (odometry + AprilTag)
+
+**What It Does:**
+- Uses encoder-based odometry for continuous position tracking
+- AprilTag corrections for absolute positioning
+- Road Runner-style path following with waypoints
+- Smooth heading control while driving
+
+**Speed Settings:**
+- Max Drive Speed: **80%** power
+- Approach Speed: 35% power
+- Align Speed: 25% power
+
+**Motor Direction Configuration:** Same as PickleTeleOp
+
+**Hardware Requirements:** Same as PickleAutoOp
 
 ---
 
@@ -385,24 +432,40 @@ These are the official FTC StarterBot examples. Your team's competition robot (P
 Before using any OpMode, configure your robot hardware in the **Robot Configuration** menu on the Driver Station:
 
 ### Pickle Bot Configuration (Competition Robot) 🏆
-**Required for:** `pickle/PickleTeleOp.java` and `pickle/PickleAutoOp.java`
+**Required for:** `pickle/PickleTeleOp.java`, `pickle/PickleAutoOp.java`, and `pickle/PickleAutoHolonomic.java`
 
 ```
-Motors:
-  - left_drive (goBILDA motor, port ?)
-  - right_drive (goBILDA motor, port ?)
-  - launcher (goBILDA high-speed motor, port ?)
+Motors (Control Hub):
+  - front_left   (goBILDA 312 RPM motor, Port 0)
+  - front_right  (goBILDA 312 RPM motor, Port 1)
+  - back_left    (goBILDA 312 RPM motor, Port 2)
+  - back_right   (goBILDA 312 RPM motor, Port 3)
+  - launcher     (goBILDA high-speed motor with encoder)
 
 Servos:
-  - left_feeder (Continuous Rotation Servo, port ?)
-  - right_feeder (Continuous Rotation Servo, port ?)
+  - left_feeder  (Continuous Rotation Servo)
+  - right_feeder (Continuous Rotation Servo)
+
+I2C:
+  - imu (built into Control Hub, auto-configured)
+
+Camera:
+  - Webcam 1 (USB webcam for AprilTag detection)
+```
+
+**Motor Direction Configuration:**
+```
+Left motors (front_left, back_left):   FORWARD
+Right motors (front_right, back_right): REVERSE
 ```
 
 **Configuration Notes:**
-- Mecanum wheels are installed but function as tank drive (2-motor only)
-- Launcher motor must have encoder cable connected
+- **4-motor mecanum drive** with full omnidirectional movement
+- All drive motor encoders must be connected (required for RUN_USING_ENCODER)
+- Launcher motor must have encoder cable connected for velocity control
 - Left feeder servo is set to REVERSE direction in code
-- All drive motors use BRAKE mode
+- All drive motors use BRAKE mode for precise stopping
+- IMU orientation: Logo UP, USB FORWARD (adjust if Control Hub mounted differently)
 
 ---
 
@@ -444,34 +507,37 @@ Sensors:
 ## 📋 Quick Start Guide
 
 ### For Competition Day 🏆
-1. **Driver Control:** Use `PickleTeleOp` (displays as "StarterBotTeleop")
-2. **Autonomous:** Use `PickleAutoOp` (displays as "StarterBotAuto")
-3. **Backup/Testing:** Use `BasicOmniOpMode_Linear` (drive only, no launcher)
+1. **Driver Control:** Use `PickleTeleOp` - 4-motor mecanum with 100% power
+2. **Autonomous (Reliable):** Use `PickleAutoOp` - encoder-based, 80% speed
+3. **Autonomous (Advanced):** Use `PickleAutoHolonomic` - with AprilTag fusion
+4. **Backup/Testing:** Use `BasicOmniOpMode_Linear` (drive only, no launcher)
 
 ### For Drivers (Practice)
-1. **Full Robot:** `pickle/PickleTeleOp.java` ✅
+1. **Full Robot:** `pickle/PickleTeleOp.java` ✅ (100% speed, Left Bumper for slow mode)
 2. **Drive Only:** `basic/BasicOmniOpMode_Linear.java` ✅
 3. **Learning:** Enable and try sample OpModes in `tele/` folder
 
 ### For Programmers
 1. **Customize Competition Robot:** Edit files in `pickle/` folder
-2. **Reference Examples:** Study `starter/` folder (original StarterBot code)
-3. **Learn Basics:** Study `basic/` samples
-4. **Add Features:** Study `basic/BasicOmniOpMode_Linear.java` for advanced patterns
+2. **Hardware Names:** See `pickle/config/PickleHardwareNames.java`
+3. **Reference Examples:** Study `starter/` folder (original StarterBot code)
+4. **Learn Basics:** Study `basic/` samples
 
 ### For Autonomous Development
-1. **Current Auto:** Customize `pickle/PickleAutoOp.java`
-2. **Time-Based (Easiest):** Study `auto/RobotAutoDriveByTime_Linear.java`
-3. **Encoder-Based (Better):** Study `auto/RobotAutoDriveByEncoder_Linear.java`
-4. **Vision-Based (Advanced):** Study `auto/RobotAutoDriveToAprilTagTank.java`
+1. **Primary Auto:** Customize `pickle/PickleAutoOp.java` (80% speed)
+2. **Advanced Auto:** Study `pickle/PickleAutoHolonomic.java` (odometry + vision)
+3. **Time-Based (Easiest):** Study `auto/RobotAutoDriveByTime_Linear.java`
+4. **Encoder-Based (Better):** Study `auto/RobotAutoDriveByEncoder_Linear.java`
+5. **Vision-Based (Advanced):** Study `auto/RobotAutoDriveToAprilTagTank.java`
 
 ---
 
 ## ✅ Enabled vs Disabled OpModes
 
 **✅ ENABLED** (appears in Driver Station menu):
-- `pickle/PickleTeleOp.java` - Competition teleop (displays as "StarterBotTeleop")
-- `pickle/PickleAutoOp.java` - Competition autonomous (displays as "StarterBotAuto")
+- `pickle/PickleTeleOp.java` - Competition teleop (4-motor mecanum, 100% speed)
+- `pickle/PickleAutoOp.java` - Competition autonomous (encoder-based, 80% speed)
+- `pickle/PickleAutoHolonomic.java` - Advanced autonomous (odometry + AprilTag fusion)
 - `basic/BasicOmniOpMode_Linear.java` - Enhanced 2-motor drive with speed modes
 - `sensor/SensorTouch.java` - Touch sensor demo
 - `sensor/SensorColor.java` - Color sensor demo
@@ -504,12 +570,21 @@ public class MyOpMode extends LinearOpMode {
 ## 🏆 Competition Strategy
 
 ### Driver-Controlled Period
-**Primary:** `pickle/PickleTeleOp` ✅ - Full robot with launcher
+**Primary:** `pickle/PickleTeleOp` ✅ - Full 4-motor mecanum drive with launcher (100% speed)
 **Backup:** `basic/BasicOmniOpMode_Linear` ✅ - Drive only (if launcher fails)
 
+**Driver Tips:**
+- Use **Left Bumper** to toggle slow mode (30%) for precision alignment
+- Hold **Left Trigger** to auto-align toward the goal
+- Select alliance during init: **X** = Blue, **B** = Red
+
 ### Autonomous Period
-**Primary:** `pickle/PickleAutoOp` ✅ - Launch projectiles + drive away
-**Strategy:** Modify this file for your team's autonomous strategy
+**Primary:** `pickle/PickleAutoOp` ✅ - Reliable encoder-based autonomous (80% speed)
+**Advanced:** `pickle/PickleAutoHolonomic` ✅ - Sensor fusion with AprilTag corrections
+
+**When to use which:**
+- `PickleAutoOp` - More predictable, good for qualification matches
+- `PickleAutoHolonomic` - More accurate positioning, better for elimination rounds
 
 ---
 
@@ -546,9 +621,11 @@ public class MyOpMode extends LinearOpMode {
 - Verify motors are plugged in
 - Test motor directions individually
 
-**Motors run backward:**
-- Flip motor direction: `FORWARD` ↔ `REVERSE`
-- See motor direction section in each file
+**Motors run backward / Robot drives in reverse:**
+- Swap ALL motor directions: `FORWARD` ↔ `REVERSE` for all 4 motors
+- Current Pickle Bot config: Left=FORWARD, Right=REVERSE
+- If only one side is wrong, swap just that side
+- See `PickleHardwareNames.java` for hardware name reference
 
 **Controller drift:**
 - Use deadzone (built into Enhanced 2-Motor Drive)
@@ -571,7 +648,14 @@ All OpModes in this directory are based on FTC SDK samples and are subject to th
 
 | Folder | Purpose | Status | File Count |
 |--------|---------|--------|------------|
-| **pickle/** | 🏆 Team competition robot | 2 enabled | 2 files |
+| **pickle/** | 🏆 Team competition robot | 3 enabled | 3+ files |
+| **pickle/config/** | Hardware configuration constants | Support files | 1 file |
+| **pickle/drive/** | Mecanum drive helper classes | Support files | 1 file |
+| **pickle/field/** | Field constants and alliance info | Support files | 3 files |
+| **pickle/geometry/** | Pose and translation classes | Support files | 3 files |
+| **pickle/odometry/** | Encoder-based position tracking | Support files | 1 file |
+| **pickle/path/** | Path following classes | Support files | 2 files |
+| **pickle/vision/** | AprilTag localization | Support files | 1 file |
 | **starter/** | Reference StarterBot examples | All disabled | 2 files |
 | **basic/** | Basic driving samples | 1 enabled | 3 files |
 | **auto/** | Autonomous samples | All disabled | 5 files |
@@ -579,11 +663,11 @@ All OpModes in this directory are based on FTC SDK samples and are subject to th
 | **sensor/** | Sensor usage demos | 2 enabled | 2 files |
 | **concept/** | Vision & concepts | All disabled | 1 file |
 
-**Total:** 17 Java files organized in 7 folders
+**Total:** 25+ Java files organized across multiple packages
 
 ---
 
-**Last Updated:** 2025-11-16
+**Last Updated:** 2025-12-14
 **Season:** DECODE (2025-2026)
 **SDK Version:** 11.0
 **Team Robot:** Pickle Bot (based on goBILDA StarterBot)

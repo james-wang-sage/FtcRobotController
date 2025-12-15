@@ -105,7 +105,7 @@ public class PickleTeleOp extends OpMode {
      */
 
     final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
-    final double LAUNCH_COOLDOWN_SECONDS = 2.0; //Minimum time between launches to prevent rapid-fire
+    final double LAUNCH_COOLDOWN_SECONDS = 1.0; //Minimum time between launches to prevent rapid-fire
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
 
@@ -231,7 +231,7 @@ public class PickleTeleOp extends OpMode {
     private AlignState alignState;
 
     // Speed control constants
-    final double NORMAL_DRIVE_SPEED = 0.7;  // 70% speed - adjust this value to tune driving feel
+    final double NORMAL_DRIVE_SPEED = 1.0;  // 100% speed - full power for competition
     final double SLOW_DRIVE_SPEED = 0.3;    // 30% speed for precision mode (activated with left bumper)
 
     /*
@@ -301,10 +301,10 @@ public class PickleTeleOp extends OpMode {
          *   - Robot drives backward: Swap ALL directions (REVERSE↔FORWARD)
          *   - Strafing goes wrong direction: Check diagonal motor pairs
          */
-        frontLeft.setDirection(DcMotor.Direction.REVERSE);
-        backLeft.setDirection(DcMotor.Direction.REVERSE);
-        frontRight.setDirection(DcMotor.Direction.FORWARD);
-        backRight.setDirection(DcMotor.Direction.FORWARD);
+        frontLeft.setDirection(DcMotor.Direction.FORWARD);
+        backLeft.setDirection(DcMotor.Direction.FORWARD);
+        frontRight.setDirection(DcMotor.Direction.REVERSE);
+        backRight.setDirection(DcMotor.Direction.REVERSE);
 
         /*
          * MOTOR RUN MODE OPTIONS:
@@ -574,7 +574,7 @@ public class PickleTeleOp extends OpMode {
          * Show the state and motor powers
          */
         telemetry.addData("Alliance", alliance);
-        telemetry.addData("Drive Mode", slowMode ? "SLOW (30%)" : "NORMAL (70%)");
+        telemetry.addData("Drive Mode", slowMode ? "SLOW (30%)" : "NORMAL (100%)");
         telemetry.addData("Launch State", launchState);
 
         // Show alignment status

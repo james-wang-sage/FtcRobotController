@@ -76,7 +76,7 @@ public class PickleAutoHolonomic extends OpMode {
 
     // Drive speeds
     /** Maximum drive speed during path following */
-    private static final double MAX_DRIVE_SPEED = 0.6;
+    private static final double MAX_DRIVE_SPEED = 0.8;
 
     /** Slower speed when approaching goal for precision */
     private static final double APPROACH_SPEED = 0.35;
@@ -126,7 +126,7 @@ public class PickleAutoHolonomic extends OpMode {
     private static final double LAUNCHER_TARGET_VELOCITY = 1125;
     private static final double LAUNCHER_MIN_VELOCITY = 1075;
     private static final double FEED_TIME_SEC = 0.20;
-    private static final double TIME_BETWEEN_SHOTS_SEC = 2.0;
+    private static final double TIME_BETWEEN_SHOTS_SEC = 1.0;
     private static final double LAUNCHER_SPINUP_TIMEOUT_SEC = 3.0;
 
     // Autonomous timing
@@ -199,10 +199,10 @@ public class PickleAutoHolonomic extends OpMode {
         rightFeeder = hardwareMap.get(CRServo.class, PickleHardwareNames.RIGHT_FEEDER_SERVO);
 
         // Motor directions
-        frontLeft.setDirection(DcMotor.Direction.REVERSE);
-        backLeft.setDirection(DcMotor.Direction.REVERSE);
-        frontRight.setDirection(DcMotor.Direction.FORWARD);
-        backRight.setDirection(DcMotor.Direction.FORWARD);
+        frontLeft.setDirection(DcMotor.Direction.FORWARD);
+        backLeft.setDirection(DcMotor.Direction.FORWARD);
+        frontRight.setDirection(DcMotor.Direction.REVERSE);
+        backRight.setDirection(DcMotor.Direction.REVERSE);
 
         // Brake mode for precision
         frontLeft.setZeroPowerBehavior(BRAKE);

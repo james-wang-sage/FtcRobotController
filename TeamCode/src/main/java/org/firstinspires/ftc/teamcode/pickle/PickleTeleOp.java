@@ -435,7 +435,7 @@ public class PickleTeleOp extends OpMode {
         try {
             imu = hardwareMap.get(IMU.class, PickleHardwareNames.IMU_NAME);
             RevHubOrientationOnRobot orientation = new RevHubOrientationOnRobot(
-                    RevHubOrientationOnRobot.LogoFacingDirection.UP,
+                    RevHubOrientationOnRobot.LogoFacingDirection.LEFT,
                     RevHubOrientationOnRobot.UsbFacingDirection.FORWARD);
             imu.initialize(new IMU.Parameters(orientation));
         } catch (Exception e) {

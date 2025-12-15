@@ -1038,7 +1038,7 @@ public class PickleAutoOp extends OpMode
             // Define the hub orientation. Adjust these parameters based on how your
             // Control Hub is mounted on the robot.
             RevHubOrientationOnRobot.LogoFacingDirection logoDirection =
-                    RevHubOrientationOnRobot.LogoFacingDirection.UP;
+                    RevHubOrientationOnRobot.LogoFacingDirection.LEFT;
             RevHubOrientationOnRobot.UsbFacingDirection usbDirection =
                     RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
 

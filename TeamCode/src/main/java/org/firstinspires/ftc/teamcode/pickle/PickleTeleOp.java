@@ -147,23 +147,42 @@ public class PickleTeleOp extends OpMode {
     /*
      * AUTO-ALIGN HEADING CONSTANTS
      *
+     * COORDINATE SYSTEM (robot-relative, yaw reset at match start):
+     *   - Robot starts FACING THE FAR WALL (toward goals)
+     *   - IMU yaw is reset to 0° at match start
+     *   - 0° = straight ahead (far wall)
+     *   - Positive angles = counter-clockwise (turn left)
+     *   - Negative angles = clockwise (turn right)
+     *
+     * DECODE FIELD LAYOUT (viewed from above):
+     *       ┌─────────────────────────────────┐
+     *       │  BLUE GOAL ◇         ◇ RED GOAL │  ← FAR WALL
+     *       │  (top-left)         (top-right) │
+     *       │       ↖               ↗         │
+     *       │        \   [🤖]     /           │  ← Robot starts facing up (0°)
+     *       │         \   ↑     /             │
+     *       │          \  │   /               │
+     *       │           45° each side         │
+     *       │                                 │
+     *       │  RED START         BLUE START   │  ← NEAR WALL (alliance stations)
+     *       └─────────────────────────────────┘
+     *
      * The goal zones have 45-degree angled borders (diagonal ramps).
      * To launch balls perpendicular to these borders:
      *
-     * RED Goal (top-right corner):
-     *   - Ramp/border runs at 45° angle
-     *   - Perpendicular heading = 135° (facing northwest toward goal opening)
+     * RED Goal (top-right corner from robot's view):
+     *   - Turn LEFT (counter-clockwise) ~45° to face perpendicular to ramp
+     *   - Target heading = +45°
      *
-     * BLUE Goal (top-left corner):
-     *   - Ramp/border runs at 135° angle
-     *   - Perpendicular heading = 45° (facing northeast toward goal opening)
+     * BLUE Goal (top-left corner from robot's view):
+     *   - Turn RIGHT (clockwise) ~45° to face perpendicular to ramp
+     *   - Target heading = -45°
      *
-     * Field coordinate system:
-     *   0° = +X (toward Red side), 90° = +Y (toward far wall)
-     *   Counter-clockwise is positive
+     * TUNING: If alignment is off, adjust these values during practice.
+     * Use telemetry to read actual heading when manually aligned to goal.
      */
-    final double RED_GOAL_PERPENDICULAR_HEADING_DEG = 135.0;
-    final double BLUE_GOAL_PERPENDICULAR_HEADING_DEG = 45.0;
+    final double RED_GOAL_PERPENDICULAR_HEADING_DEG = 45.0;
+    final double BLUE_GOAL_PERPENDICULAR_HEADING_DEG = -45.0;
 
     // Heading tolerance for auto-alignment (in degrees)
     final double ALIGN_TOLERANCE_DEG = 3.0;
@@ -292,11 +311,11 @@ public class PickleTeleOp extends OpMode {
          * MECANUM MOTOR DIRECTION SETUP
          *
          * For mecanum drive, motors on opposite sides spin in opposite directions to drive forward.
-         * The left side motors are reversed so that positive power to all motors moves the robot forward.
+         * The right side motors are reversed so that positive power to all motors moves the robot forward.
          *
-         * STANDARD CONFIGURATION:
-         *   - Left motors (REVERSE): Spin "backward" mechanically → wheels move forward
-         *   - Right motors (FORWARD): Spin "forward" → wheels move forward
+         * CURRENT CONFIGURATION:
+         *   - Left motors (FORWARD): Spin "forward" → wheels move forward
+         *   - Right motors (REVERSE): Spin "backward" mechanically → wheels move forward
          *   - Result: Robot drives forward when all motors get positive power! ✓
          *
          * IMPORTANT: Test drive your robot! If the robot spins, strafes incorrectly, or moves
@@ -460,7 +479,7 @@ public class PickleTeleOp extends OpMode {
      * Code to run REPEATEDLY after the driver hits INIT, but before they hit START
      *
      * USE THIS TIME TO:
-     * 1. Select alliance color (X for Blue, B for Red)
+     * 1. Select alliance color (A for Red, B for Blue)
      * 2. Verify IMU is working
      * 3. Position robot on starting tile
      */
@@ -500,9 +519,34 @@ public class PickleTeleOp extends OpMode {
 
     /*
      * Code to run ONCE when the driver hits START
+     *
+     * This is the moment the match ACTUALLY begins. Use this to:
+     * 1. Reset IMU yaw - makes current heading the "zero" reference
+     * 2. Reset timers - so they count from match start, not init
+     * 3. Reset state machines - ensure clean starting state
+     *
+     * WHY NOT IN init()?
+     * The time between init() and start() is unpredictable (could be minutes).
+     * During this time, the robot may be repositioned, rotated, or adjusted.
+     * Resetting here ensures consistent behavior regardless of setup time.
      */
     @Override
     public void start() {
+        // Reset IMU yaw so the robot's current facing direction becomes 0°
+        // This makes auto-align headings relative to match start position
+        if (imu != null) {
+            imu.resetYaw();
+        }
+
+        // Reset timers to count from match start
+        // Without this, cooldown timer shows time since init (could be minutes!)
+        feederTimer.reset();
+        launchCooldownTimer.reset();
+
+        // Ensure state machines start in known states
+        // (Already set in init(), but good practice to be explicit)
+        launchState = LaunchState.IDLE;
+        alignState = AlignState.IDLE;
     }
 
     /*
@@ -554,15 +598,16 @@ public class PickleTeleOp extends OpMode {
          *
          * - Left stick Y-axis: Forward/backward movement
          * - Left stick X-axis: Strafing (side-to-side movement)
-         * - Right stick X-axis: Rotation (turning) - OR auto-align rotation
+         * - Right stick X-axis: Rotation (turning)
+         * - Auto-align rotation: Added separately (bypasses input shaping)
          *
          * Note: We negate left_stick_y because pushing forward gives negative values on gamepad.
          *
-         * When auto-aligning, rotation comes from getAlignRotation() instead of the right stick.
-         * The driver can still strafe and move forward/backward during alignment.
+         * Driver rotation and auto-rotation are passed separately so that:
+         * - Driver inputs get deadband + quadratic shaping (for fine control)
+         * - Auto-rotation bypasses shaping (computed values need full precision)
          */
-        double rotation = (alignRotation != 0.0) ? alignRotation : gamepad1.right_stick_x;
-        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, rotation);
+        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x, alignRotation);
 
         /*
          * STEP 4: LAUNCHER CONTROL (Centralized)
@@ -673,8 +718,16 @@ public class PickleTeleOp extends OpMode {
      * This implementation includes:
      * 1. DEADBAND - Ignores joystick drift (values < 5%)
      * 2. NORMALIZATION - Scales powers proportionally when exceeding ±1.0
+     *
+     * IMPORTANT: Driver inputs (forward, strafe, driverRotate) get deadband + shaping
+     * for fine control. Auto-rotation bypasses shaping to preserve computed precision.
+     *
+     * @param forward       Driver forward/backward input (left stick Y)
+     * @param strafe        Driver strafe input (left stick X)
+     * @param driverRotate  Driver rotation input (right stick X) - gets shaped
+     * @param autoRotate    Auto-align rotation (computed) - bypasses shaping
      */
-    void mecanumDrive(double forward, double strafe, double rotate) {
+    void mecanumDrive(double forward, double strafe, double driverRotate, double autoRotate) {
         // STEP 1: Apply SCALED deadband to eliminate stick drift with smooth transition
         // Unlike a simple deadband that creates a "jump" at the threshold,
         // scaled deadband remaps the remaining range (0.05 to 1.0) back to (0.0 to 1.0)
@@ -682,7 +735,8 @@ public class PickleTeleOp extends OpMode {
         final double DEADBAND = 0.05;  // 5% deadband threshold
         forward = applyScaledDeadband(forward, DEADBAND);
         strafe = applyScaledDeadband(strafe, DEADBAND);
-        rotate = applyScaledDeadband(rotate, DEADBAND);
+        driverRotate = applyScaledDeadband(driverRotate, DEADBAND);
+        // NOTE: autoRotate does NOT get deadband - it's a computed value, not joystick input
 
         // STEP 2: Apply INPUT SHAPING for finer low-speed control
         // Squaring the input (while preserving sign) creates a curved response:
@@ -691,20 +745,27 @@ public class PickleTeleOp extends OpMode {
         // This is called "quadratic scaling" and is widely used in FTC/FRC
         forward = shapeInput(forward);
         strafe = shapeInput(strafe);
-        rotate = shapeInput(rotate);
+        driverRotate = shapeInput(driverRotate);
+        // NOTE: autoRotate does NOT get shaped - computed values need full precision!
+        // Without this separation, 0.12 auto-rotate becomes 0.12² = 0.0144 (too weak!)
 
-        // STEP 3: Apply strafe compensation
+        // STEP 3: Combine driver rotation with auto-rotation
+        // If auto-aligning, autoRotate will have a value; otherwise it's 0
+        // Driver can override auto-align by moving right stick (handled in loop())
+        double rotate = driverRotate + autoRotate;
+
+        // STEP 4: Apply strafe compensation
         // Mecanum wheels strafe less efficiently due to roller friction
         // Multiplying strafe input makes lateral movement feel equal to forward movement
         strafe = strafe * STRAFE_MULTIPLIER;
 
-        // STEP 4: Calculate raw motor powers using mecanum drive formula
+        // STEP 5: Calculate raw motor powers using mecanum drive formula
         double rawFrontLeft = forward + strafe + rotate;
         double rawFrontRight = forward - strafe - rotate;
         double rawBackLeft = forward - strafe + rotate;
         double rawBackRight = forward + strafe - rotate;
 
-        // STEP 5: Normalize to prevent clipping distortion
+        // STEP 6: Normalize to prevent clipping distortion
         // Find the maximum absolute value among all 4 motors
         // If max > 1.0, scale all down proportionally to preserve the ratio
         double maxPower = Math.max(1.0, Math.max(
@@ -716,13 +777,13 @@ public class PickleTeleOp extends OpMode {
         rawBackLeft /= maxPower;
         rawBackRight /= maxPower;
 
-        // STEP 6: Apply speed multiplier
+        // STEP 7: Apply speed multiplier
         frontLeftPower = rawFrontLeft * DRIVE_SPEED;
         frontRightPower = rawFrontRight * DRIVE_SPEED;
         backLeftPower = rawBackLeft * DRIVE_SPEED;
         backRightPower = rawBackRight * DRIVE_SPEED;
 
-        // STEP 7: Send calculated power to all 4 wheels
+        // STEP 8: Send calculated power to all 4 wheels
         frontLeft.setPower(frontLeftPower);
         frontRight.setPower(frontRightPower);
         backLeft.setPower(backLeftPower);

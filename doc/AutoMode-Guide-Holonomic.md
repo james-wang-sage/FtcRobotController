@@ -88,6 +88,8 @@ Basic (Sequential):              Holonomic (Simultaneous):
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+![System Block Diagram](system.block.diagram.png)
+
 ### State Machine
 
 ```

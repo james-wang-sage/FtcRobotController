@@ -44,7 +44,7 @@ import org.firstinspires.ftc.teamcode.pickle.vision.AprilTagLocalizer;
  * │   Wheel     │────▶│   Odometry      │────▶│   Pose       │
  * │  Encoders   │     │  Integration    │     │  Estimate    │
  * └─────────────┘     └─────────────────┘     └──────┬───────┘
- *                                                     │
+ *                                                    │
  * ┌─────────────┐     ┌─────────────────┐            │
  * │  AprilTag   │────▶│   Position      │────────────┤ Correction
  * │   Camera    │     │   Measurement   │            │
@@ -76,48 +76,63 @@ public class PickleAutoHolonomic extends OpMode {
 
     // Drive speeds
     /** Maximum drive speed during path following */
-    final double MAX_DRIVE_SPEED = 0.6;
+    private static final double MAX_DRIVE_SPEED = 0.6;
 
     /** Slower speed when approaching goal for precision */
-    final double APPROACH_SPEED = 0.35;
+    private static final double APPROACH_SPEED = 0.35;
 
     /** Speed for final alignment before shooting */
-    final double ALIGN_SPEED = 0.25;
+    private static final double ALIGN_SPEED = 0.25;
 
     // Tolerances
     /** Position tolerance in mm (how close is "close enough") */
-    final double POSITION_TOLERANCE_MM = 40.0;
+    private static final double POSITION_TOLERANCE_MM = 40.0;
 
     /** Heading tolerance in degrees */
-    final double HEADING_TOLERANCE_DEG = 3.0;
+    private static final double HEADING_TOLERANCE_DEG = 3.0;
+
+    /** Heading tolerance in radians (computed from degrees) */
+    private static final double HEADING_TOLERANCE_RAD = Math.toRadians(HEADING_TOLERANCE_DEG);
 
     /** Maximum time to reach each waypoint before giving up */
-    final double WAYPOINT_TIMEOUT_SEC = 4.0;
+    private static final double WAYPOINT_TIMEOUT_SEC = 4.0;
 
-    /** Time to hold at shooting position before firing */
-    final double SETTLE_TIME_SEC = 0.3;
+    /** Minimum time robot must be aligned before shooting */
+    private static final double MIN_ALIGNED_TIME_SEC = 0.15;
 
     // AprilTag fusion settings
     /** How much to trust AprilTag vs odometry (0=ignore, 1=full trust) */
-    final double APRILTAG_BLEND_FACTOR = 0.4;
+    private static final double APRILTAG_BLEND_FACTOR = 0.4;
 
     /** Maximum age of AprilTag reading to use (ms) */
-    final long APRILTAG_MAX_AGE_MS = 200;
+    private static final long APRILTAG_MAX_AGE_MS = 200;
 
     /** Distance at which we start trusting AprilTags more */
-    final double APRILTAG_CLOSE_RANGE_MM = 1500;
+    private static final double APRILTAG_CLOSE_RANGE_MM = 1500;
+
+    /** Maximum position jump from AprilTag before rejecting as outlier (mm) */
+    private static final double APRILTAG_MAX_CORRECTION_MM = 300.0;
+
+    /** Maximum heading jump from AprilTag before rejecting as outlier (radians) */
+    private static final double APRILTAG_MAX_HEADING_CORRECTION_RAD = Math.toRadians(20.0);
 
     // Odometry tuning (for GoBILDA 312 RPM motors with mecanum wheels)
-    final double WHEEL_RADIUS_MM = 48.0;         // GoBILDA mecanum wheel
-    final double TICKS_PER_REV = 537.7;          // GoBILDA 312 RPM motor encoder
-    final double TRACK_WIDTH_MM = 350.0;         // Left-right wheel distance
-    final double WHEEL_BASE_MM = 300.0;          // Front-back wheel distance
+    private static final double WHEEL_RADIUS_MM = 48.0;         // GoBILDA mecanum wheel
+    private static final double TICKS_PER_REV = 537.7;          // GoBILDA 312 RPM motor encoder
+    private static final double TRACK_WIDTH_MM = 350.0;         // Left-right wheel distance
+    private static final double WHEEL_BASE_MM = 300.0;          // Front-back wheel distance
 
     // Launcher constants
-    final double LAUNCHER_TARGET_VELOCITY = 1125;
-    final double LAUNCHER_MIN_VELOCITY = 1075;
-    final double FEED_TIME = 0.20;
-    final double TIME_BETWEEN_SHOTS = 2;
+    private static final double LAUNCHER_TARGET_VELOCITY = 1125;
+    private static final double LAUNCHER_MIN_VELOCITY = 1075;
+    private static final double FEED_TIME_SEC = 0.20;
+    private static final double TIME_BETWEEN_SHOTS_SEC = 2.0;
+    private static final double LAUNCHER_SPINUP_TIMEOUT_SEC = 3.0;
+
+    // Autonomous timing
+    private static final double AUTO_TIMEOUT_SEC = 30.0;
+    private static final double PARK_TIMEOUT_SEC = 5.0;
+    private static final int DEFAULT_SHOTS_TO_FIRE = 3;
 
     // ========== HARDWARE ==========
 
@@ -153,8 +168,16 @@ public class PickleAutoHolonomic extends OpMode {
     private ElapsedTime stateTimer = new ElapsedTime();
     private ElapsedTime shotTimer = new ElapsedTime();
     private ElapsedTime feederTimer = new ElapsedTime();
+    private ElapsedTime autoTimer = new ElapsedTime();
+    private ElapsedTime alignedTimer = new ElapsedTime();
 
-    private int shotsToFire = 3;
+    private int shotsToFire = DEFAULT_SHOTS_TO_FIRE;
+
+    /** IMU heading offset to convert IMU yaw to field heading */
+    private double imuHeadingOffset = 0.0;
+
+    /** Tracks whether robot is currently aligned for shooting */
+    private boolean wasAligned = false;
 
     // Target positions
     private Pose2d startPose;
@@ -205,6 +228,15 @@ public class PickleAutoHolonomic extends OpMode {
         launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER,
                 new PIDFCoefficients(300, 0, 0, 10));
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
+
+        // Set all motors to safe initial power (0)
+        frontLeft.setPower(0);
+        frontRight.setPower(0);
+        backLeft.setPower(0);
+        backRight.setPower(0);
+        launcher.setPower(0);
+        leftFeeder.setPower(0);
+        rightFeeder.setPower(0);
 
         // Initialize IMU
         initIMU();
@@ -282,25 +314,42 @@ public class PickleAutoHolonomic extends OpMode {
         // Set initial pose
         calculateTargetPositions();
         odometry.resetPose(startPose);
-        imu.resetYaw();
+
+        // Calculate IMU heading offset instead of resetting yaw
+        // This preserves the relationship: fieldHeading = imuYaw + offset
+        if (imu != null) {
+            double currentImuYaw = imu.getRobotYawPitchRollAngles().getYaw(org.firstinspires.ftc.robotcore.external.navigation.AngleUnit.RADIANS);
+            imuHeadingOffset = startPose.getHeading() - currentImuYaw;
+        }
 
         // Build path to shooting position
         buildShootingPath();
 
         autoState = AutoState.FOLLOW_PATH_TO_SHOOTING;
         launchState = LaunchState.IDLE;
-        shotsToFire = 3;
+        shotsToFire = DEFAULT_SHOTS_TO_FIRE;
+        wasAligned = false;
         stateTimer.reset();
+        autoTimer.reset();
     }
 
     @Override
     public void loop() {
+        // Check for global autonomous timeout (30 seconds)
+        if (autoTimer.seconds() > AUTO_TIMEOUT_SEC && autoState != AutoState.COMPLETE) {
+            stopAllHardware();
+            autoState = AutoState.COMPLETE;
+            telemetry.addData("WARNING", "Auto timeout reached!");
+        }
+
         // Update odometry
         odometry.update();
-        Pose2d currentPose = odometry.getPose();
 
-        // Apply AprilTag corrections
+        // Apply AprilTag corrections BEFORE reading pose for consistent state
         applyAprilTagCorrection();
+
+        // Get corrected pose for state machine and telemetry
+        Pose2d currentPose = odometry.getPose();
 
         // State machine
         switch (autoState) {
@@ -346,9 +395,36 @@ public class PickleAutoHolonomic extends OpMode {
 
     @Override
     public void stop() {
+        // Stop all hardware
+        stopAllHardware();
+
         // Clean up resources
         if (aprilTagLocalizer != null) {
             aprilTagLocalizer.close();
+        }
+    }
+
+    /**
+     * Stops all motors and servos. Called during stop() and timeout.
+     */
+    private void stopAllHardware() {
+        // Stop drive motors
+        frontLeft.setPower(0);
+        frontRight.setPower(0);
+        backLeft.setPower(0);
+        backRight.setPower(0);
+
+        // Stop launcher
+        launcher.setVelocity(0);
+        launcher.setPower(0);
+
+        // Stop feeders
+        leftFeeder.setPower(0);
+        rightFeeder.setPower(0);
+
+        // Stop drive helper if available
+        if (driveHelper != null) {
+            driveHelper.stop();
         }
     }
 
@@ -377,10 +453,42 @@ public class PickleAutoHolonomic extends OpMode {
         // Fine-tune alignment
         driveHelper.driveToPose(targetPose, currentPose, ALIGN_SPEED);
 
-        if (stateTimer.seconds() > SETTLE_TIME_SEC) {
+        // Check if robot is within tolerance
+        double positionError = currentPose.getTranslation().distanceTo(shootingPosition);
+        double headingError = Math.abs(normalizeAngle(currentPose.getHeading() - headingToGoal));
+        boolean isAligned = positionError < POSITION_TOLERANCE_MM && headingError < HEADING_TOLERANCE_RAD;
+
+        // Track alignment time - robot must be aligned for MIN_ALIGNED_TIME_SEC
+        if (isAligned) {
+            if (!wasAligned) {
+                // Just became aligned, start timing
+                alignedTimer.reset();
+                wasAligned = true;
+            } else if (alignedTimer.seconds() > MIN_ALIGNED_TIME_SEC) {
+                // Aligned long enough, ready to shoot
+                driveHelper.stop();
+                autoState = AutoState.REQUEST_SHOT;
+            }
+        } else {
+            // Not aligned, reset timer
+            wasAligned = false;
+        }
+
+        // Fallback: if stuck settling too long (10x expected time), proceed anyway
+        if (stateTimer.seconds() > MIN_ALIGNED_TIME_SEC * 10) {
+            telemetry.addData("WARNING", "Settle timeout - proceeding to shoot");
             driveHelper.stop();
             autoState = AutoState.REQUEST_SHOT;
         }
+    }
+
+    /**
+     * Normalizes an angle to the range [-PI, PI].
+     */
+    private double normalizeAngle(double angle) {
+        while (angle > Math.PI) angle -= 2 * Math.PI;
+        while (angle < -Math.PI) angle += 2 * Math.PI;
+        return angle;
     }
 
     private void handleFollowPathToPark() {
@@ -390,7 +498,7 @@ public class PickleAutoHolonomic extends OpMode {
         pathFollower.update(currentPose);
 
         // Check if path is complete or timeout
-        if (pathFollower.isComplete() || stateTimer.seconds() > 5.0) {
+        if (pathFollower.isComplete() || stateTimer.seconds() > PARK_TIMEOUT_SEC) {
             driveHelper.stop();
             autoState = AutoState.COMPLETE;
         }
@@ -430,12 +538,13 @@ public class PickleAutoHolonomic extends OpMode {
     // ========== SENSOR FUSION ==========
 
     /**
-     * Applies AprilTag corrections to odometry.
+     * Applies AprilTag corrections to odometry with outlier rejection.
      *
-     * <p>This implements a simple sensor fusion approach:</p>
+     * <p>This implements a robust sensor fusion approach:</p>
      * <ul>
      *   <li>Odometry provides continuous high-frequency updates</li>
      *   <li>AprilTag provides periodic absolute corrections</li>
+     *   <li>Outlier rejection prevents large jumps from bad detections</li>
      *   <li>Blend factor determines trust level (higher when closer to tag)</li>
      * </ul>
      */
@@ -445,14 +554,31 @@ public class PickleAutoHolonomic extends OpMode {
         Pose2d visionPose = aprilTagLocalizer.getEstimatedPose(alliance);
 
         if (visionPose != null && aprilTagLocalizer.hasRecentDetection(APRILTAG_MAX_AGE_MS)) {
-            // Calculate adaptive blend factor based on distance to goal
             Pose2d currentPose = odometry.getPose();
+
+            // Outlier rejection: check if correction is too large
+            double positionDelta = currentPose.getTranslation().distanceTo(visionPose.getTranslation());
+            double headingDelta = Math.abs(normalizeAngle(currentPose.getHeading() - visionPose.getHeading()));
+
+            if (positionDelta > APRILTAG_MAX_CORRECTION_MM) {
+                // Position jump too large - likely a bad detection
+                telemetry.addData("AprilTag", "Rejected: position jump %.0fmm", positionDelta);
+                return;
+            }
+
+            if (headingDelta > APRILTAG_MAX_HEADING_CORRECTION_RAD) {
+                // Heading jump too large - likely a bad detection
+                telemetry.addData("AprilTag", "Rejected: heading jump %.1f°", Math.toDegrees(headingDelta));
+                return;
+            }
+
+            // Calculate adaptive blend factor based on distance to goal
             double distanceToGoal = currentPose.getTranslation().distanceTo(goalCenter);
 
             double blendFactor = APRILTAG_BLEND_FACTOR;
             if (distanceToGoal < APRILTAG_CLOSE_RANGE_MM) {
                 // Trust AprilTag more when close to goal
-                blendFactor = APRILTAG_BLEND_FACTOR * 1.5;
+                blendFactor = Math.min(APRILTAG_BLEND_FACTOR * 1.5, 0.8);
             }
 
             // Apply correction
@@ -507,20 +633,34 @@ public class PickleAutoHolonomic extends OpMode {
                     shotTimer.reset();
                 }
                 break;
+
             case PREPARE:
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Check if launcher is up to speed
                 if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY) {
+                    launchState = LaunchState.LAUNCH;
+                    leftFeeder.setPower(1);
+                    rightFeeder.setPower(1);
+                    feederTimer.reset();  // Reset at actual feed event for accurate timing
+                }
+                // Timeout: proceed anyway if spin-up takes too long
+                else if (shotTimer.seconds() > LAUNCHER_SPINUP_TIMEOUT_SEC) {
+                    telemetry.addData("WARNING", "Launcher spin-up timeout");
                     launchState = LaunchState.LAUNCH;
                     leftFeeder.setPower(1);
                     rightFeeder.setPower(1);
                     feederTimer.reset();
                 }
                 break;
+
             case LAUNCH:
-                if (feederTimer.seconds() > FEED_TIME) {
+                if (feederTimer.seconds() > FEED_TIME_SEC) {
                     leftFeeder.setPower(0);
                     rightFeeder.setPower(0);
-                    if (shotTimer.seconds() > TIME_BETWEEN_SHOTS) {
+
+                    // Use time since feed started for between-shot timing
+                    if (feederTimer.seconds() > TIME_BETWEEN_SHOTS_SEC) {
                         launchState = LaunchState.IDLE;
                         return true;
                     }

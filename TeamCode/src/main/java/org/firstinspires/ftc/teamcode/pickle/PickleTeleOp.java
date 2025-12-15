@@ -40,9 +40,15 @@ import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.util.ElapsedTime;
+
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.pickle.config.PickleHardwareNames;
+import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
 
 /*
  * This file includes a teleop (driver-controlled) file for the goBILDA® StarterBot for the
@@ -130,6 +136,36 @@ public class PickleTeleOp extends OpMode {
     final double LAUNCHER_TARGET_VELOCITY = 1125;  // Target speed in encoder ticks/second
     final double LAUNCHER_MIN_VELOCITY = 1075;     // Minimum speed before allowing launch
 
+    /*
+     * AUTO-ALIGN HEADING CONSTANTS
+     *
+     * The goal zones have 45-degree angled borders (diagonal ramps).
+     * To launch balls perpendicular to these borders:
+     *
+     * RED Goal (top-right corner):
+     *   - Ramp/border runs at 45° angle
+     *   - Perpendicular heading = 135° (facing northwest toward goal opening)
+     *
+     * BLUE Goal (top-left corner):
+     *   - Ramp/border runs at 135° angle
+     *   - Perpendicular heading = 45° (facing northeast toward goal opening)
+     *
+     * Field coordinate system:
+     *   0° = +X (toward Red side), 90° = +Y (toward far wall)
+     *   Counter-clockwise is positive
+     */
+    final double RED_GOAL_PERPENDICULAR_HEADING_DEG = 135.0;
+    final double BLUE_GOAL_PERPENDICULAR_HEADING_DEG = 45.0;
+
+    // Heading tolerance for auto-alignment (in degrees)
+    final double ALIGN_TOLERANCE_DEG = 3.0;
+
+    // Rotation speed during auto-alignment (0 to 1)
+    final double ALIGN_ROTATION_SPEED = 0.35;
+
+    // Proportional gain for heading correction during auto-align
+    final double ALIGN_HEADING_KP = 0.015;
+
     // Declare OpMode members - 4 mecanum drive motors
     private DcMotor frontLeft = null;
     private DcMotor frontRight = null;
@@ -138,6 +174,14 @@ public class PickleTeleOp extends OpMode {
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
+    private IMU imu = null;
+
+    // Alliance selection - determines which goal to align toward
+    private Alliance alliance = Alliance.RED;
+
+    // IMU heading offset to convert IMU yaw to field heading
+    // fieldHeading = imuYaw + imuHeadingOffset
+    private double imuHeadingOffset = 0.0;
 
     ElapsedTime feederTimer = new ElapsedTime();
     ElapsedTime launchCooldownTimer = new ElapsedTime(); // Tracks time since last launch
@@ -165,7 +209,26 @@ public class PickleTeleOp extends OpMode {
         LAUNCHING,
     }
 
+    /*
+     * AUTO-ALIGN STATE MACHINE
+     *
+     * When the driver presses L1, the robot automatically rotates to face
+     * perpendicular to the goal zone border. This gives optimal ball trajectory
+     * for launching.
+     *
+     * States:
+     * - IDLE: Normal teleop control, waiting for L1 press
+     * - ALIGNING: Robot is rotating toward target heading
+     * - ALIGNED: Target heading reached, ready to launch (brief hold state)
+     */
+    private enum AlignState {
+        IDLE,
+        ALIGNING,
+        ALIGNED,
+    }
+
     private LaunchState launchState;
+    private AlignState alignState;
 
     // Speed control constants
     final double NORMAL_DRIVE_SPEED = 0.7;  // 70% speed - adjust this value to tune driving feel
@@ -200,6 +263,7 @@ public class PickleTeleOp extends OpMode {
     @Override
     public void init() {
         launchState = LaunchState.IDLE;
+        alignState = AlignState.IDLE;
 
         // Reset timers to start counting from initialization, not object construction
         // This ensures cooldown displays correctly and timing aligns with match start
@@ -357,16 +421,76 @@ public class PickleTeleOp extends OpMode {
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
         /*
+         * IMU INITIALIZATION
+         *
+         * The IMU (Inertial Measurement Unit) provides accurate heading information.
+         * This is critical for the auto-align feature to know which way the robot is facing.
+         *
+         * IMPORTANT: Configure the IMU orientation to match how the Control Hub is mounted:
+         * - LogoFacingDirection: Which way the REV logo faces (UP, DOWN, FORWARD, etc.)
+         * - UsbFacingDirection: Which way the USB ports face (FORWARD, LEFT, RIGHT, etc.)
+         *
+         * If the robot rotates the wrong direction during alignment, swap USB direction.
+         */
+        try {
+            imu = hardwareMap.get(IMU.class, PickleHardwareNames.IMU_NAME);
+            RevHubOrientationOnRobot orientation = new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP,
+                    RevHubOrientationOnRobot.UsbFacingDirection.FORWARD);
+            imu.initialize(new IMU.Parameters(orientation));
+        } catch (Exception e) {
+            imu = null;
+            telemetry.addData("IMU ERROR", e.getMessage());
+        }
+
+        /*
          * Tell the driver that initialization is complete.
          */
         telemetry.addData("Status", "Initialized");
+        telemetry.addData("IMU", imu != null ? "Ready" : "NOT AVAILABLE");
+        telemetry.addData("Alliance", alliance);
     }
 
     /*
      * Code to run REPEATEDLY after the driver hits INIT, but before they hit START
+     *
+     * USE THIS TIME TO:
+     * 1. Select alliance color (X for Blue, B for Red)
+     * 2. Verify IMU is working
+     * 3. Position robot on starting tile
      */
     @Override
     public void init_loop() {
+        // Alliance selection - press X for Blue, B for Red
+        if (gamepad1.x) {
+            alliance = Alliance.BLUE;
+        }
+        if (gamepad1.b) {
+            alliance = Alliance.RED;
+        }
+
+        // Display alliance selection instructions
+        telemetry.addData("--- ALLIANCE SELECTION ---", "");
+        telemetry.addData("Press X", "for BLUE");
+        telemetry.addData("Press B", "for RED");
+        telemetry.addData("Current Alliance", alliance);
+        telemetry.addLine();
+
+        // Display target heading for current alliance
+        double targetHeading = (alliance == Alliance.RED)
+                ? RED_GOAL_PERPENDICULAR_HEADING_DEG
+                : BLUE_GOAL_PERPENDICULAR_HEADING_DEG;
+        telemetry.addData("Target Heading", "%.1f°", targetHeading);
+
+        // Display current IMU heading for verification
+        if (imu != null) {
+            double currentHeading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+            telemetry.addData("Current IMU Heading", "%.1f°", currentHeading);
+        } else {
+            telemetry.addData("IMU", "NOT AVAILABLE - alignment disabled");
+        }
+
+        telemetry.update();
     }
 
     /*
@@ -390,6 +514,31 @@ public class PickleTeleOp extends OpMode {
         }
 
         /*
+         * AUTO-ALIGN TO GOAL (L1 / Left Trigger Button)
+         *
+         * When L1 is pressed, the robot automatically rotates to face perpendicular
+         * to the goal zone border for optimal ball launching trajectory.
+         *
+         * The driver can cancel alignment at any time by:
+         * - Moving the right stick (manual rotation override)
+         * - Pressing L1 again (toggle off)
+         */
+        if (gamepad1.left_trigger > 0.5) {
+            // L1 pressed - start or continue alignment
+            if (alignState == AlignState.IDLE) {
+                alignState = AlignState.ALIGNING;
+            }
+        } else {
+            // L1 released - return to idle
+            if (alignState != AlignState.IDLE) {
+                alignState = AlignState.IDLE;
+            }
+        }
+
+        // Handle auto-alignment rotation (overrides manual rotation when active)
+        boolean isAutoAligning = autoAlign();
+
+        /*
          * MECANUM DRIVE CONTROLS:
          * - Left stick Y-axis: Forward/backward movement
          * - Left stick X-axis: Strafing (side-to-side movement)
@@ -399,8 +548,12 @@ public class PickleTeleOp extends OpMode {
          * allowing the robot to move in any direction while simultaneously rotating.
          *
          * Note: We negate left_stick_y because pushing forward gives negative values on gamepad.
+         *
+         * When auto-aligning, rotation is handled by the autoAlign() method, so we pass 0 for rotate.
+         * The driver can still strafe and move forward/backward during alignment.
          */
-        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x);
+        double rotation = isAutoAligning ? 0.0 : gamepad1.right_stick_x;
+        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, rotation);
 
         /*
          * Here we give the user control of the speed of the launcher motor without automatically
@@ -420,8 +573,21 @@ public class PickleTeleOp extends OpMode {
         /*
          * Show the state and motor powers
          */
+        telemetry.addData("Alliance", alliance);
         telemetry.addData("Drive Mode", slowMode ? "SLOW (30%)" : "NORMAL (70%)");
-        telemetry.addData("State", launchState);
+        telemetry.addData("Launch State", launchState);
+
+        // Show alignment status
+        telemetry.addData("Align State", alignState);
+        if (imu != null) {
+            double currentHeading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+            double targetHeading = (alliance == Alliance.RED)
+                    ? RED_GOAL_PERPENDICULAR_HEADING_DEG
+                    : BLUE_GOAL_PERPENDICULAR_HEADING_DEG;
+            double headingError = normalizeAngleDegrees(targetHeading - currentHeading);
+            telemetry.addData("Heading", "%.1f° → %.1f° (err: %.1f°)",
+                    currentHeading, targetHeading, headingError);
+        }
 
         // Show launch cooldown status
         double cooldownRemaining = LAUNCH_COOLDOWN_SECONDS - launchCooldownTimer.seconds();
@@ -650,5 +816,135 @@ public class PickleTeleOp extends OpMode {
                 }
                 break;
         }
+    }
+
+    /*
+     * AUTO-ALIGN TO GOAL PERPENDICULAR HEADING
+     *
+     * This method handles the automatic rotation to face perpendicular to the goal zone border.
+     * When active, it overrides the manual rotation input and uses proportional control to
+     * smoothly rotate the robot to the target heading.
+     *
+     * ALGORITHM:
+     * 1. Get target heading based on alliance (135° for Red, 45° for Blue)
+     * 2. Get current heading from IMU
+     * 3. Calculate heading error (difference between target and current)
+     * 4. Apply proportional control: rotate_power = Kp * error
+     * 5. Clamp power to max alignment speed
+     * 6. Apply rotation power to motors
+     *
+     * PROPORTIONAL CONTROL (P-controller):
+     * - Error = Target - Current
+     * - Output = Kp * Error
+     * - When far from target: high error → high rotation power
+     * - When close to target: low error → low rotation power (prevents overshoot)
+     *
+     * @return true if actively aligning (rotation being applied), false otherwise
+     */
+    boolean autoAlign() {
+        // Only align if in ALIGNING state and IMU is available
+        if (alignState != AlignState.ALIGNING || imu == null) {
+            return false;
+        }
+
+        // Get target heading based on alliance
+        double targetHeadingDeg = (alliance == Alliance.RED)
+                ? RED_GOAL_PERPENDICULAR_HEADING_DEG
+                : BLUE_GOAL_PERPENDICULAR_HEADING_DEG;
+
+        // Get current heading from IMU
+        double currentHeadingDeg = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+
+        // Calculate heading error (normalized to -180 to 180 degrees)
+        double headingErrorDeg = normalizeAngleDegrees(targetHeadingDeg - currentHeadingDeg);
+
+        // Check if we're close enough - aligned!
+        if (Math.abs(headingErrorDeg) <= ALIGN_TOLERANCE_DEG) {
+            alignState = AlignState.ALIGNED;
+            // Apply a small holding rotation to maintain position
+            return false;
+        }
+
+        // Apply proportional control for smooth rotation
+        // Positive error → need to rotate counter-clockwise (positive rotation)
+        // Negative error → need to rotate clockwise (negative rotation)
+        double rotatePower = headingErrorDeg * ALIGN_HEADING_KP;
+
+        // Clamp to maximum alignment speed
+        rotatePower = clamp(rotatePower, -ALIGN_ROTATION_SPEED, ALIGN_ROTATION_SPEED);
+
+        // Ensure minimum power to overcome static friction
+        final double MIN_ROTATION_POWER = 0.12;
+        if (Math.abs(rotatePower) < MIN_ROTATION_POWER && Math.abs(headingErrorDeg) > ALIGN_TOLERANCE_DEG) {
+            rotatePower = Math.copySign(MIN_ROTATION_POWER, rotatePower);
+        }
+
+        // Apply rotation to motors (rotation only, no translation)
+        applyRotationOnly(rotatePower);
+
+        return true;
+    }
+
+    /*
+     * APPLY ROTATION-ONLY MOTOR POWERS
+     *
+     * This method applies power to the drive motors to rotate the robot in place
+     * without any forward/backward or strafing movement.
+     *
+     * For mecanum drive rotation:
+     * - Left motors get positive power (rotate CCW from top view)
+     * - Right motors get negative power
+     *
+     * @param rotatePower Rotation power (-1 to 1, positive = counter-clockwise)
+     */
+    void applyRotationOnly(double rotatePower) {
+        // For rotation only: left side positive, right side negative
+        // This makes positive rotatePower = counter-clockwise (increasing heading)
+        double leftPower = rotatePower;
+        double rightPower = -rotatePower;
+
+        frontLeft.setPower(leftPower);
+        backLeft.setPower(leftPower);
+        frontRight.setPower(rightPower);
+        backRight.setPower(rightPower);
+
+        // Update power variables for telemetry
+        frontLeftPower = leftPower;
+        backLeftPower = leftPower;
+        frontRightPower = rightPower;
+        backRightPower = rightPower;
+    }
+
+    /*
+     * NORMALIZE ANGLE TO -180 TO 180 DEGREES
+     *
+     * This helper function normalizes any angle to the range [-180, 180].
+     * This is crucial for heading error calculations to ensure we always
+     * take the shortest rotation path.
+     *
+     * Examples:
+     * - Input: 270° → Output: -90° (rotate 90° clockwise instead of 270° CCW)
+     * - Input: -270° → Output: 90° (rotate 90° CCW instead of 270° CW)
+     * - Input: 45° → Output: 45° (no change)
+     *
+     * @param angleDeg Angle in degrees (any value)
+     * @return Normalized angle in range [-180, 180]
+     */
+    double normalizeAngleDegrees(double angleDeg) {
+        while (angleDeg > 180.0) angleDeg -= 360.0;
+        while (angleDeg < -180.0) angleDeg += 360.0;
+        return angleDeg;
+    }
+
+    /*
+     * CLAMP VALUE TO RANGE
+     *
+     * @param value Value to clamp
+     * @param min   Minimum allowed value
+     * @param max   Maximum allowed value
+     * @return Value clamped to [min, max]
+     */
+    double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

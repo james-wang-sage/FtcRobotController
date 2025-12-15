@@ -6,8 +6,8 @@
 
 1. [Overview](#overview)
 2. [Control Scheme](#control-scheme)
-3. [Auto-Align Feature (L1)](#auto-align-feature-l1)
-4. [Drive Modes](#drive-modes)
+3. [Auto-Align Feature (Left Bumper)](#auto-align-feature-left-bumper)
+4. [Input Processing](#input-processing)
 5. [Launcher System](#launcher-system)
 6. [Pre-Match Setup](#pre-match-setup)
 7. [Telemetry Guide](#telemetry-guide)
@@ -24,8 +24,7 @@ The **PickleTeleOp** OpMode provides driver-controlled operation of the Pickle r
 - **4-motor mecanum drive** for omnidirectional movement
 - **High-speed ball launcher** with velocity-controlled motor
 - **Dual feeder servos** for consistent ball feeding
-- **IMU-based auto-align** for precise goal targeting
-- **Slow mode** for precision driving
+- **IMU-based auto-align** (toggle) for precise goal targeting
 
 ### Robot Capabilities
 
@@ -48,7 +47,7 @@ The **PickleTeleOp** OpMode provides driver-controlled operation of the Pickle r
 │   ────────────────────────────────────                          │
 │       • Velocity-controlled motor (1125 ticks/sec target)       │
 │       • Dual feeder servos for ball intake                      │
-│       • 2-second cooldown between shots                         │
+│       • 1-second cooldown between shots                         │
 │                                                                 │
 │   SENSORS: IMU for heading                                      │
 │   ────────────────────────                                      │
@@ -71,20 +70,21 @@ The **PickleTeleOp** OpMode provides driver-controlled operation of the Pickle r
 │                                                                 │
 │                 ┌─────────────────────────┐                     │
 │                 │    [LB]         [RB]    │                     │
-│                 │  Slow Mode    LAUNCH    │                     │
-│                 │    Toggle      Shot     │                     │
+│                 │  AUTO-ALIGN   LAUNCH    │                     │
+│                 │   (toggle)     Shot     │                     │
 │                 │                         │                     │
 │                 │   [LT]         [RT]     │                     │
-│                 │  AUTO-ALIGN   (unused)  │                     │
-│                 │   to Goal               │                     │
+│                 │  (unused)     (unused)  │                     │
+│                 │                         │                     │
 │                 │                         │                     │
 │          ┌──────┴──────┐    ┌──────┴──────┐                     │
 │          │    [Y]      │    │     [B]     │                     │
-│          │  Spin Up    │    │  Stop       │                     │
-│          │  Launcher   │    │  Launcher   │                     │
+│          │  Spin Up    │    │  (unused)   │                     │
+│          │  Launcher   │    │             │                     │
 │          │             │    │             │                     │
 │    ┌─────┤  [X]   [A]  ├────┤             │                     │
-│    │     │(unused)     │    │             │                     │
+│    │     │  Stop       │    │             │                     │
+│    │     │  Launcher   │    │             │                     │
 │    │     └─────────────┘    └─────────────┘                     │
 │    │                                                            │
 │    │     ┌─────┐              ┌─────┐                           │
@@ -101,18 +101,24 @@ The **PickleTeleOp** OpMode provides driver-controlled operation of the Pickle r
 
 ### Control Summary Table
 
+**During Match:**
+
 | Control | Action | Notes |
 |---------|--------|-------|
 | **Left Stick Y** | Forward / Backward | Push forward to drive forward |
 | **Left Stick X** | Strafe Left / Right | Push right to strafe right |
 | **Right Stick X** | Rotate | Push right to turn clockwise |
-| **Left Bumper (LB)** | Toggle Slow Mode | 30% speed for precision |
+| **Left Bumper (LB)** | Toggle Auto-Align | Press to start/stop auto-alignment |
 | **Right Bumper (RB)** | Launch Ball | Triggers full launch sequence |
-| **Left Trigger (LT)** | Auto-Align to Goal | Hold to align perpendicular to goal |
 | **Y Button** | Spin Up Launcher | Manually spin up flywheel |
-| **B Button** | Stop Launcher | Stop flywheel motor |
-| **X Button** | Select BLUE Alliance | During init only |
-| **B Button** | Select RED Alliance | During init only |
+| **X Button** | Stop Launcher | Stop flywheel motor |
+
+**During Init (before START):**
+
+| Control | Action | Notes |
+|---------|--------|-------|
+| **A Button** | Select RED Alliance | Sets target heading to 135° |
+| **B Button** | Select BLUE Alliance | Sets target heading to 45° |
 
 ### Joystick Orientation
 
@@ -132,9 +138,9 @@ LEFT STICK:                          RIGHT STICK:
 
 ---
 
-## Auto-Align Feature (L1)
+## Auto-Align Feature (Left Bumper)
 
-The **Auto-Align** feature automatically rotates the robot to face perpendicular to the goal zone border, providing the optimal angle for ball launching.
+The **Auto-Align** feature automatically rotates the robot to face perpendicular to the goal zone border, providing the optimal angle for ball launching. Press **Left Bumper** to toggle it on/off.
 
 ### How It Works
 
@@ -170,12 +176,13 @@ The **Auto-Align** feature automatically rotates the robot to face perpendicular
 
 ### Usage Steps
 
-1. **Select Alliance** (during init): Press **X** for Blue or **B** for Red
+1. **Select Alliance** (during init): Press **A** for Red or **B** for Blue
 2. **Drive near goal zone**: Position robot in launching range
-3. **Hold L1 (Left Trigger)**: Robot automatically rotates to target heading
+3. **Press Left Bumper**: Toggles auto-align ON - robot automatically rotates to target heading
 4. **Watch telemetry**: Shows current heading → target heading (error)
 5. **When aligned**: "Align State: ALIGNED" appears
-6. **Launch**: Press **RB** to fire while holding L1
+6. **Launch**: Press **RB** to fire
+7. **Press Left Bumper again**: Toggles auto-align OFF - return to manual control
 
 ### State Machine
 
@@ -186,9 +193,9 @@ The **Auto-Align** feature automatically rotates the robot to face perpendicular
 │                                                              │
 │   ┌──────────┐                                               │
 │   │   IDLE   │◀─────────────────────────────────────┐        │
-│   │          │        L1 Released                   │        │
+│   │          │        LB Pressed (toggle off)       │        │
 │   └────┬─────┘                                      │        │
-│        │ L1 Pressed                                 │        │
+│        │ LB Pressed (toggle on)                     │        │
 │        ▼                                            │        │
 │   ┌──────────┐                                      │        │
 │   │ ALIGNING │  Robot rotating toward target        │        │
@@ -198,9 +205,9 @@ The **Auto-Align** feature automatically rotates the robot to face perpendicular
 │        ▼                                            │        │
 │   ┌──────────┐                                      │        │
 │   │ ALIGNED  │  Ready to launch!                    │        │
-│   │          │  (still holding L1)                  │        │
+│   │          │  (alignment stays active)            │        │
 │   └────┬─────┘                                      │        │
-│        │ L1 Released                                │        │
+│        │ LB Pressed (toggle off)                    │        │
 │        └────────────────────────────────────────────┘        │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -208,56 +215,19 @@ The **Auto-Align** feature automatically rotates the robot to face perpendicular
 
 ### Driver Tips for Auto-Align
 
-1. **Position first, then align**: Get close to launching position before pressing L1
+1. **Position first, then align**: Get close to launching position before pressing LB
 2. **You can still drive**: Forward/backward and strafe work during alignment
-3. **Release to cancel**: Let go of L1 to return to manual rotation control
+3. **Toggle to cancel**: Press LB again to return to manual rotation control
 4. **Check telemetry**: The heading error shows how far you need to rotate
-5. **Small adjustments**: If slightly off after aligning, tap L1 again
+5. **Stays active**: Unlike hold-to-align, toggle lets you take your finger off LB
 
 ---
 
-## Drive Modes
+## Input Processing
 
-### Normal Mode (Default)
+The TeleOp includes several input processing features that make driving smoother and more controllable:
 
-- **Speed**: 70% of maximum motor power
-- **Best for**: General driving, approaching positions quickly
-
-### Slow Mode (Left Bumper Toggle)
-
-- **Speed**: 30% of maximum motor power
-- **Best for**: Precision alignment, delicate maneuvers near obstacles
-- **Toggle**: Press LB once to enable, press again to disable
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      DRIVE MODES COMPARISON                      │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   NORMAL MODE (70%)              SLOW MODE (30%)                │
-│   ─────────────────              ─────────────────              │
-│                                                                 │
-│   ████████████████░░░░░░        ██████░░░░░░░░░░░░░░            │
-│   └────────┬───────┘            └──┬──┘                         │
-│            │                       │                            │
-│   • Fast traversal               • Precise positioning          │
-│   • Aggressive driving           • Lining up shots              │
-│   • Covering distance            • Avoiding collisions          │
-│   • Default state                • Toggle with LB               │
-│                                                                 │
-│   Telemetry shows: "NORMAL (70%)" or "SLOW (30%)"               │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Input Processing
-
-The TeleOp includes several input processing features:
-
-1. **Deadband (5%)**: Eliminates joystick drift - small movements ignored
-2. **Quadratic Scaling**: Squares input for fine low-speed control
-3. **Strafe Compensation (1.1x)**: Compensates for mecanum strafe inefficiency
-4. **Power Normalization**: Prevents any motor from exceeding ±1.0
+### Processing Pipeline
 
 ```
 Input Processing Pipeline:
@@ -266,6 +236,29 @@ Input Processing Pipeline:
 Raw Joystick ──▶ Deadband ──▶ Quadratic ──▶ Strafe ──▶ Mecanum ──▶ Normalize ──▶ Motors
    Input         Filter       Scaling       Mult       Math        Powers
 ```
+
+### Features
+
+| Feature | Value | Purpose |
+|---------|-------|---------|
+| **Deadband** | 5% | Eliminates joystick drift - small movements ignored |
+| **Quadratic Scaling** | x² | Squares input for fine low-speed control |
+| **Strafe Compensation** | 1.1x | Compensates for mecanum strafe inefficiency |
+| **Power Normalization** | ±1.0 max | Prevents any motor from exceeding limits |
+
+### How Quadratic Scaling Helps
+
+```
+Input → Output (with squaring):
+──────────────────────────────
+  10% stick  →   1% power   (very precise!)
+  30% stick  →   9% power
+  50% stick  →  25% power
+  70% stick  →  49% power
+ 100% stick  → 100% power   (full speed available)
+```
+
+This gives drivers fine control at low speeds while maintaining full power for fast movements.
 
 ---
 
@@ -301,7 +294,7 @@ Raw Joystick ──▶ Deadband ──▶ Quadratic ──▶ Strafe ──▶ M
 |---------|--------|
 | **RB** | Full launch sequence (spin up → feed → cooldown) |
 | **Y** | Manually spin up flywheel (for pre-heating) |
-| **B** | Stop flywheel motor |
+| **X** | Stop flywheel motor |
 
 ### Launch Parameters
 
@@ -310,7 +303,7 @@ Raw Joystick ──▶ Deadband ──▶ Quadratic ──▶ Strafe ──▶ M
 | Target Velocity | 1125 ticks/sec | Flywheel target speed |
 | Min Velocity | 1075 ticks/sec | Minimum before feeding |
 | Feed Time | 0.2 seconds | How long feeders run |
-| Cooldown | 2.0 seconds | Time between shots |
+| Cooldown | 1.0 seconds | Time between shots |
 
 ### Pro Tips for Launching
 
@@ -333,8 +326,8 @@ During the init phase (after pressing INIT but before START):
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │   [ ] 1. SELECT ALLIANCE                                        │
-│         • Press X for BLUE alliance                             │
-│         • Press B for RED alliance                              │
+│         • Press A for RED alliance                              │
+│         • Press B for BLUE alliance                             │
 │         • Verify "Current Alliance: RED/BLUE" in telemetry      │
 │                                                                 │
 │   [ ] 2. VERIFY IMU                                             │
@@ -359,8 +352,8 @@ During the init phase (after pressing INIT but before START):
 
 ```
 --- ALLIANCE SELECTION ---
-Press X: for BLUE
-Press B: for RED
+Press A: for RED
+Press B: for BLUE
 Current Alliance: RED
 
 Target Heading: 135.0°
@@ -379,7 +372,6 @@ Current IMU Heading: 87.3°
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │   Alliance: RED                    ◀── Your selected alliance   │
-│   Drive Mode: NORMAL (70%)         ◀── Current speed mode       │
 │   Launch State: IDLE               ◀── Launcher status          │
 │                                                                 │
 │   Align State: ALIGNING            ◀── Auto-align status        │
@@ -387,7 +379,7 @@ Current IMU Heading: 87.3°
 │            └──┬──┘  └──┬──┘  └───┬───┘                          │
 │           Current   Target    How far                           │
 │                                                                 │
-│   Launch Cooldown: 1.2 sec         ◀── Or "Launch Status: READY"│
+│   Launch Cooldown: 0.8 sec         ◀── Or "Launch Status: READY"│
 │                                                                 │
 │   Front Motors: L:0.45  R:0.45     ◀── Motor power levels       │
 │   Back Motors:  L:0.45  R:0.45                                  │
@@ -401,7 +393,6 @@ Current IMU Heading: 87.3°
 | Telemetry | Meaning | What to Look For |
 |-----------|---------|------------------|
 | Alliance | Selected team | Should match your field position |
-| Drive Mode | Speed setting | SLOW during alignment |
 | Launch State | Launcher progress | IDLE when ready |
 | Align State | Auto-align status | ALIGNED when ready to fire |
 | Heading | Current → Target (error) | Error approaching 0° |
@@ -417,9 +408,8 @@ Current IMU Heading: 87.3°
 Located at the top of `PickleTeleOp.java`:
 
 ```java
-// Speed control constants
-final double NORMAL_DRIVE_SPEED = 0.7;  // 70% - adjust for faster/slower driving
-final double SLOW_DRIVE_SPEED = 0.3;    // 30% - adjust for precision mode
+// Speed control constant
+final double DRIVE_SPEED = 1.0;  // 100% - full power for competition
 
 // Strafe compensation
 final double STRAFE_MULTIPLIER = 1.1;   // Increase if strafing feels weak
@@ -447,7 +437,7 @@ final double LAUNCHER_MIN_VELOCITY = 1075;     // Min speed before feeding
 
 // Timing
 final double FEED_TIME_SECONDS = 0.20;         // How long feeders run
-final double LAUNCH_COOLDOWN_SECONDS = 2.0;    // Time between shots
+final double LAUNCH_COOLDOWN_SECONDS = 1.0;    // Time between shots
 ```
 
 ### IMU Orientation
@@ -535,12 +525,10 @@ final double ALIGN_TOLERANCE_DEG = 5.0;  // More forgiving
 ### Problem: Drive feels sluggish or unresponsive
 
 **Solutions:**
-1. Increase speed multiplier:
-   ```java
-   final double NORMAL_DRIVE_SPEED = 0.85;  // Higher speed
-   ```
+1. Verify `DRIVE_SPEED` is set to 1.0 (full power)
 2. Check motor mode is `RUN_USING_ENCODER` (not `RUN_TO_POSITION`)
 3. Verify all 4 drive motors are connected
+4. Check battery voltage is sufficient
 
 ---
 
@@ -563,26 +551,24 @@ final double ALIGN_TOLERANCE_DEG = 5.0;  // More forgiving
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  INIT PHASE:                                                    │
-│    • Press X = BLUE alliance                                    │
-│    • Press B = RED alliance                                     │
+│    • Press A = RED alliance                                     │
+│    • Press B = BLUE alliance                                    │
 │    • Verify IMU status and heading                              │
 │                                                                 │
 │  DRIVING:                                                       │
 │    Left Stick Y  = Forward/Backward                             │
 │    Left Stick X  = Strafe Left/Right                            │
 │    Right Stick X = Rotate                                       │
-│    LB            = Toggle Slow Mode (30%)                       │
 │                                                                 │
 │  AUTO-ALIGN:                                                    │
-│    Hold LT       = Auto-rotate to goal-perpendicular heading    │
-│    Release LT    = Return to manual rotation                    │
+│    Press LB      = Toggle auto-align ON/OFF                     │
 │    Target:  RED = 135° (NW)  |  BLUE = 45° (NE)                 │
 │                                                                 │
 │  LAUNCHING:                                                     │
 │    Y             = Spin up launcher (manual)                    │
-│    B             = Stop launcher                                │
+│    X             = Stop launcher                                │
 │    RB            = Full launch sequence                         │
-│    Cooldown: 2 seconds between shots                            │
+│    Cooldown: 1 second between shots                             │
 │                                                                 │
 │  TELEMETRY KEY VALUES:                                          │
 │    Align State: IDLE → ALIGNING → ALIGNED                       │
@@ -592,10 +578,10 @@ final double ALIGN_TOLERANCE_DEG = 5.0;  // More forgiving
 │                                                                 │
 │  DRIVER WORKFLOW:                                               │
 │    1. Drive toward goal zone                                    │
-│    2. Hold LT to auto-align                                     │
+│    2. Press LB to toggle auto-align ON                          │
 │    3. Wait for "ALIGNED" state                                  │
 │    4. Press RB to launch                                        │
-│    5. Release LT, reposition, repeat                            │
+│    5. Press LB to toggle OFF, reposition, repeat                │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -659,3 +645,4 @@ final double ALIGN_TOLERANCE_DEG = 5.0;  // More forgiving
 |---------|------|---------|
 | 1.0 | Dec 2024 | Initial release with mecanum drive and launcher |
 | 1.1 | Dec 2024 | Added L1 auto-align to goal feature |
+| 1.2 | Dec 2024 | Updated controls: LB toggle for auto-align, X to stop launcher, A/B for alliance selection; Removed slow mode |

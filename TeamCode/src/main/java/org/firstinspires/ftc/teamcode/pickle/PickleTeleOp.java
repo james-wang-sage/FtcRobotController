@@ -230,9 +230,8 @@ public class PickleTeleOp extends OpMode {
     private LaunchState launchState;
     private AlignState alignState;
 
-    // Speed control constants
-    final double NORMAL_DRIVE_SPEED = 1.0;  // 100% speed - full power for competition
-    final double SLOW_DRIVE_SPEED = 0.3;    // 30% speed for precision mode (activated with left bumper)
+    // Speed control constant
+    final double DRIVE_SPEED = 1.0;  // 100% speed - full power for competition
 
     /*
      * STRAFE COMPENSATION MULTIPLIER
@@ -255,7 +254,6 @@ public class PickleTeleOp extends OpMode {
     double frontRightPower;
     double backLeftPower;
     double backRightPower;
-    boolean slowMode = false;
 
     /*
      * Code to run ONCE when the driver hits INIT
@@ -461,18 +459,18 @@ public class PickleTeleOp extends OpMode {
      */
     @Override
     public void init_loop() {
-        // Alliance selection - press X for Blue, B for Red
-        if (gamepad1.x) {
-            alliance = Alliance.BLUE;
+        // Alliance selection - press A for Red, B for Blue
+        if (gamepad1.a) {
+            alliance = Alliance.RED;
         }
         if (gamepad1.b) {
-            alliance = Alliance.RED;
+            alliance = Alliance.BLUE;
         }
 
         // Display alliance selection instructions
         telemetry.addData("--- ALLIANCE SELECTION ---", "");
-        telemetry.addData("Press X", "for BLUE");
-        telemetry.addData("Press B", "for RED");
+        telemetry.addData("Press A", "for RED");
+        telemetry.addData("Press B", "for BLUE");
         telemetry.addData("Current Alliance", alliance);
         telemetry.addLine();
 
@@ -506,31 +504,21 @@ public class PickleTeleOp extends OpMode {
     @Override
     public void loop() {
         /*
-         * Toggle slow mode with left bumper for precision driving
-         * This is helpful when you need fine control for alignment or delicate maneuvers
-         */
-        if (gamepad1.leftBumperWasPressed()) {
-            slowMode = !slowMode;  // Toggle the mode on button press
-        }
-
-        /*
-         * AUTO-ALIGN TO GOAL (L1 / Left Trigger Button)
+         * AUTO-ALIGN TO GOAL (Left Bumper - Toggle)
          *
-         * When L1 is pressed, the robot automatically rotates to face perpendicular
-         * to the goal zone border for optimal ball launching trajectory.
+         * Press left bumper to toggle auto-alignment on/off. When enabled, the robot
+         * automatically rotates to face perpendicular to the goal zone border for
+         * optimal ball launching trajectory.
          *
          * The driver can cancel alignment at any time by:
          * - Moving the right stick (manual rotation override)
-         * - Pressing L1 again (toggle off)
+         * - Pressing left bumper again (toggle off)
          */
-        if (gamepad1.left_trigger > 0.5) {
-            // L1 pressed - start or continue alignment
+        if (gamepad1.leftBumperWasPressed()) {
+            // Toggle alignment state on button press
             if (alignState == AlignState.IDLE) {
                 alignState = AlignState.ALIGNING;
-            }
-        } else {
-            // L1 released - return to idle
-            if (alignState != AlignState.IDLE) {
+            } else {
                 alignState = AlignState.IDLE;
             }
         }
@@ -556,12 +544,15 @@ public class PickleTeleOp extends OpMode {
         mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, rotation);
 
         /*
-         * Here we give the user control of the speed of the launcher motor without automatically
-         * queuing a shot.
+         * LAUNCHER MOTOR CONTROL (Y = spin up, X = stop)
+         *
+         * Press Y to start spinning the launcher wheel to target velocity.
+         * Press X to stop the launcher wheel.
+         * This gives manual control without automatically queuing a shot.
          */
         if (gamepad1.y) {
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-        } else if (gamepad1.b) { // stop flywheel
+        } else if (gamepad1.x) {
             launcher.setVelocity(STOP_SPEED);
         }
 
@@ -574,7 +565,6 @@ public class PickleTeleOp extends OpMode {
          * Show the state and motor powers
          */
         telemetry.addData("Alliance", alliance);
-        telemetry.addData("Drive Mode", slowMode ? "SLOW (30%)" : "NORMAL (100%)");
         telemetry.addData("Launch State", launchState);
 
         // Show alignment status
@@ -712,12 +702,11 @@ public class PickleTeleOp extends OpMode {
         rawBackLeft /= maxPower;
         rawBackRight /= maxPower;
 
-        // STEP 6: Apply speed multiplier for normal/slow mode
-        double speedMultiplier = slowMode ? SLOW_DRIVE_SPEED : NORMAL_DRIVE_SPEED;
-        frontLeftPower = rawFrontLeft * speedMultiplier;
-        frontRightPower = rawFrontRight * speedMultiplier;
-        backLeftPower = rawBackLeft * speedMultiplier;
-        backRightPower = rawBackRight * speedMultiplier;
+        // STEP 6: Apply speed multiplier
+        frontLeftPower = rawFrontLeft * DRIVE_SPEED;
+        frontRightPower = rawFrontRight * DRIVE_SPEED;
+        backLeftPower = rawBackLeft * DRIVE_SPEED;
+        backRightPower = rawBackRight * DRIVE_SPEED;
 
         // STEP 7: Send calculated power to all 4 wheels
         frontLeft.setPower(frontLeftPower);

@@ -40,8 +40,8 @@ teamcode/
 - Scaled deadband to eliminate joystick drift
 
 **Speed Settings:**
-- Normal Mode: **100%** power (full speed for competition)
-- Slow Mode: **30%** power (toggle with Left Bumper for precision)
+- Drive Speed: **100%** power (full speed for competition)
+- Launcher: 1,400 ticks/sec target velocity (50% of max)
 
 **Motor Direction Configuration:**
 - Left motors (front_left, back_left): `FORWARD`
@@ -50,13 +50,13 @@ teamcode/
 **Controls:**
 - Left Stick Y: Forward/Backward
 - Left Stick X: Strafe (side-to-side)
-- Right Stick X: Rotation
-- Left Bumper: Toggle slow mode (30% speed)
-- Left Trigger: Auto-align to goal
-- Y Button: Spin up launcher to target velocity
-- B Button: Stop launcher / Select RED alliance (during init)
-- X Button: Select BLUE alliance (during init)
-- Right Bumper: Fire projectile
+- Right Stick X: Rotation (cancels auto-align if active)
+- Left Bumper: Toggle auto-align to goal ON/OFF
+- Y Button (hold): Pre-spin launcher to target velocity
+- X Button (hold): Stop launcher / cancel launch sequence
+- A Button: Select RED alliance (during init)
+- B Button: Select BLUE alliance (during init)
+- Right Bumper: Fire projectile (spin up + feed when ready)
 
 **Hardware Requirements:**
 - Motors: `front_left`, `front_right`, `back_left`, `back_right`, `launcher`
@@ -574,9 +574,11 @@ public class MyOpMode extends LinearOpMode {
 **Backup:** `basic/BasicOmniOpMode_Linear` ✅ - Drive only (if launcher fails)
 
 **Driver Tips:**
-- Use **Left Bumper** to toggle slow mode (30%) for precision alignment
-- Hold **Left Trigger** to auto-align toward the goal
-- Select alliance during init: **X** = Blue, **B** = Red
+- Press **Left Bumper** to toggle auto-align ON/OFF
+- Move right stick to cancel auto-align and regain manual control
+- Hold **Y** to pre-spin launcher before firing
+- Hold **X** to stop launcher or cancel a shot
+- Select alliance during init: **A** = Red, **B** = Blue
 
 ### Autonomous Period
 **Primary:** `pickle/PickleAutoOp` ✅ - Reliable encoder-based autonomous (80% speed)

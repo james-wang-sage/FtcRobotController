@@ -188,22 +188,29 @@ frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
 ## Code Reference: Where Compensation Happens
 
-### TeleOp Strafe Compensation (`PickleTeleOp.java:695`)
+### TeleOp Strafe Compensation (`PickleTeleOp.java`)
 
 ```java
 // STEP 3: Apply strafe compensation
 // Mecanum wheels strafe less efficiently due to roller friction
 // Multiplying strafe input makes lateral movement feel equal to forward movement
-strafe = strafe * STRAFE_MULTIPLIER;
+strafe = strafe * STRAFE_MULTIPLIER;  // STRAFE_MULTIPLIER = 1.1
 ```
 
-### Autonomous Strafe Compensation (`PickleAutoHolonomic.java:255`)
+### Autonomous Strafe Compensation (`PickleAutoHolonomic.java`)
 
 ```java
 driveHelper.setStrafeMultiplier(1.2);
 ```
 
-### Why We Use RUN_USING_ENCODER (`PickleTeleOp.java:346-349`)
+### Motor Configuration
+
+**Hardware:** goBILDA FTC Starter Kit 2025-2026 + 1 extra motor
+- 5× goBILDA 5203 Series Yellow Jacket (312 RPM, 19.2:1 ratio)
+- Encoder: 537.7 CPR at output shaft
+- Max velocity: 2,796 ticks/sec
+
+### Why We Use RUN_USING_ENCODER
 
 ```java
 // Closed-loop velocity control maintains constant speed even as

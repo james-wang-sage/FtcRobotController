@@ -92,16 +92,22 @@ public class PickleTeleOp extends OpMode {
      * - "left_feeder"   : CRServo (continuous rotation servo)
      * - "right_feeder"  : CRServo (continuous rotation servo)
      *
-     * MOTOR/ENCODER REQUIREMENTS:
-     * - All motors must have encoders connected to use RUN_USING_ENCODER mode
-     * - Launcher motor assumes goBILDA 5203/5204 or similar (28 CPR encoder)
-     * - Drive motors work with any standard FTC motors with encoders
+     * HARDWARE: goBILDA FTC Starter Kit 2025-2026 + 1 extra motor
+     * https://www.gobilda.com/ftc-starter-kit-2025-2026-season/
+     *
+     * MOTOR CONFIGURATION (5× goBILDA 5203 Series Yellow Jacket, 312 RPM):
+     * - 4× Drive motors: 312 RPM (19.2:1 ratio), 537.7 CPR at output shaft
+     * - 1× Launcher motor: 312 RPM (19.2:1 ratio), 537.7 CPR at output shaft
+     *
+     * SERVO SPECIFICATIONS (goBILDA 2000 Series Dual Mode):
+     * - Left/Right feeders: Continuous rotation mode
      *
      * CONTROL HUB PORT MAPPING (recommended):
      * - Port 0: front_left
      * - Port 1: front_right
      * - Port 2: back_left
      * - Port 3: back_right
+     * - Expansion Hub Port 0: launcher
      */
 
     final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
@@ -114,27 +120,29 @@ public class PickleTeleOp extends OpMode {
      *
      * These values control the launcher motor's speed using encoder feedback.
      *
-     * HARDWARE ASSUMPTIONS:
-     * - Motor: goBILDA 5203/5204 Series (or similar high-speed motor)
-     * - Encoder: 28 counts per revolution (CPR) at the motor
-     * - Velocity units: Encoder ticks per second
+     * HARDWARE: goBILDA 5203 Series Yellow Jacket Motor (312 RPM, 19.2:1)
      *
-     * CALCULATING VELOCITY:
-     * If your motor specs say it runs at 6000 RPM max:
-     *   - 6000 RPM ÷ 60 = 100 revolutions per second
-     *   - 100 rev/sec × 28 ticks/rev = 2800 ticks/sec maximum
-     * Current target (1125 ticks/sec) ≈ 40% of a 6000 RPM motor's max speed
+     * IMPORTANT: The FTC SDK measures velocity at the OUTPUT SHAFT (after gearbox),
+     * NOT at the motor shaft.
+     *
+     * MOTOR SPECS:
+     *   - Gear Ratio: 19.2:1
+     *   - Output RPM: 312 RPM (no load @ 12V)
+     *   - Encoder CPR: 537.7 counts per revolution at output shaft
+     *   - Max Velocity: 312/60 × 537.7 = 2,796 ticks/sec
+     *
+     * CURRENT CONFIGURATION:
+     *   - Target: 1,400 ticks/sec = 156 RPM output (50% of max)
+     *   - Min: 1,300 ticks/sec = 145 RPM output (spin-up threshold)
      *
      * TUNING THESE VALUES:
-     * 1. Start with a lower target velocity (e.g., 800) for safety
+     * 1. Start with a lower target velocity (e.g., 1000) for safety
      * 2. Gradually increase until launcher performs consistently
      * 3. Set MIN_VELOCITY about 50-100 ticks below TARGET for reliability
-     * 4. Monitor telemetry "motorSpeed" to see actual velocity
-     *
-     * If using different motors/gearing, you MUST retune these values!
+     * 4. Monitor telemetry "Launcher Speed" to see actual velocity
      */
-    final double LAUNCHER_TARGET_VELOCITY = 1125;  // Target speed in encoder ticks/second
-    final double LAUNCHER_MIN_VELOCITY = 1075;     // Minimum speed before allowing launch
+    final double LAUNCHER_TARGET_VELOCITY = 1400;  // Target speed in encoder ticks/second
+    final double LAUNCHER_MIN_VELOCITY = 1300;     // Minimum speed before allowing launch
 
     /*
      * AUTO-ALIGN HEADING CONSTANTS
@@ -179,9 +187,8 @@ public class PickleTeleOp extends OpMode {
     // Alliance selection - determines which goal to align toward
     private Alliance alliance = Alliance.RED;
 
-    // IMU heading offset to convert IMU yaw to field heading
-    // fieldHeading = imuYaw + imuHeadingOffset
-    private double imuHeadingOffset = 0.0;
+    // Cached IMU heading - read once per loop for consistency and performance
+    private double cachedHeadingDeg = 0.0;
 
     ElapsedTime feederTimer = new ElapsedTime();
     ElapsedTime launchCooldownTimer = new ElapsedTime(); // Tracks time since last launch
@@ -378,10 +385,10 @@ public class PickleTeleOp extends OpMode {
          * These coefficients control how the launcher motor reaches and maintains target velocity.
          * Format: PIDFCoefficients(P, I, D, F)
          *
-         * Current values: P=300, I=0, D=0, F=10
+         * Current values: P=50, I=0, D=0, F=14
          *
          * WHAT EACH COEFFICIENT DOES:
-         * - P (Proportional): 300
+         * - P (Proportional): 50
          *   Main corrective force. Higher = faster response but can cause oscillation.
          *   If motor overshoots/oscillates around target, decrease P.
          *   If motor is too slow to reach target, increase P.
@@ -394,23 +401,23 @@ public class PickleTeleOp extends OpMode {
          *   Dampens oscillation. Usually 0 for FTC velocity control.
          *   Increase slightly if you reduced P but still see oscillation.
          *
-         * - F (Feedforward): 10
-         *   Predictive component based on target velocity. Reduces reliance on P.
-         *   Calculate as: F = (12V × 60) / (motor_free_speed_RPM × ticks_per_rev)
-         *   For a 6000 RPM motor with 28 CPR: F ≈ (720) / (6000 × 28) ≈ 0.0043 per tick/sec
-         *   Scaled value: 0.0043 × target_velocity ≈ 10 for this application
+         * - F (Feedforward): 14
+         *   Predictive component that provides base power for target velocity.
+         *   CALCULATION FOR goBILDA 5203 (312 RPM, 537.7 CPR):
+         *     Max velocity = 312/60 × 537.7 = 2,796 ticks/sec
+         *     At 100% power (32767 internal units), motor runs at max velocity
+         *     F = 32767 / 2796 ≈ 11.7, rounded up to 14 for margin
          *
          * TUNING PROCESS:
-         * 1. Set F first using the formula above
-         * 2. Start with P=100, increase until motor reaches target quickly
+         * 1. Set F first using the formula: F = 32767 / max_ticks_per_sec
+         * 2. Start with P=30, increase until motor reaches target quickly
          * 3. If oscillating, reduce P by 20-30%
          * 4. Only adjust I/D if problems persist
          * 5. Test with actual game pieces - loaded performance may differ
          *
-         * HARDWARE-SPECIFIC: These values are tuned for goBILDA 5203/5204 motors.
-         * If you change motors, gearing, or wheel diameter, you MUST retune!
+         * HARDWARE-SPECIFIC: Tuned for goBILDA 5203 (312 RPM, 19.2:1) motor.
          */
-        launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(300, 0, 0, 10));
+        launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(50, 0, 0, 14));
 
         /*
          * Much like our drivetrain motors, we set the left feeder servo to reverse so that they
@@ -504,7 +511,18 @@ public class PickleTeleOp extends OpMode {
     @Override
     public void loop() {
         /*
-         * AUTO-ALIGN TO GOAL (Left Bumper - Toggle)
+         * STEP 1: CACHE SENSOR READINGS
+         *
+         * Read sensors ONCE at the start of each loop for:
+         * - Consistency: Same values used for control and telemetry
+         * - Performance: I2C reads take ~2ms each, avoid redundant reads
+         */
+        if (imu != null) {
+            cachedHeadingDeg = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+        }
+
+        /*
+         * STEP 2: AUTO-ALIGN TO GOAL (Left Bumper - Toggle)
          *
          * Press left bumper to toggle auto-alignment on/off. When enabled, the robot
          * automatically rotates to face perpendicular to the goal zone border for
@@ -523,60 +541,60 @@ public class PickleTeleOp extends OpMode {
             }
         }
 
-        // Handle auto-alignment rotation (overrides manual rotation when active)
-        boolean isAutoAligning = autoAlign();
+        // Cancel alignment if driver moves the right stick (manual override)
+        if (alignState == AlignState.ALIGNING && Math.abs(gamepad1.right_stick_x) > 0.1) {
+            alignState = AlignState.IDLE;
+        }
+
+        // Get rotation command from auto-align (returns 0 if not aligning)
+        double alignRotation = getAlignRotation();
 
         /*
-         * MECANUM DRIVE CONTROLS:
+         * STEP 3: MECANUM DRIVE CONTROLS
+         *
          * - Left stick Y-axis: Forward/backward movement
          * - Left stick X-axis: Strafing (side-to-side movement)
-         * - Right stick X-axis: Rotation (turning)
-         *
-         * The mecanumDrive function calculates the power for all 4 motors based on these inputs,
-         * allowing the robot to move in any direction while simultaneously rotating.
+         * - Right stick X-axis: Rotation (turning) - OR auto-align rotation
          *
          * Note: We negate left_stick_y because pushing forward gives negative values on gamepad.
          *
-         * When auto-aligning, rotation is handled by the autoAlign() method, so we pass 0 for rotate.
+         * When auto-aligning, rotation comes from getAlignRotation() instead of the right stick.
          * The driver can still strafe and move forward/backward during alignment.
          */
-        double rotation = isAutoAligning ? 0.0 : gamepad1.right_stick_x;
+        double rotation = (alignRotation != 0.0) ? alignRotation : gamepad1.right_stick_x;
         mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, rotation);
 
         /*
-         * LAUNCHER MOTOR CONTROL (Y = spin up, X = stop)
+         * STEP 4: LAUNCHER CONTROL (Centralized)
          *
-         * Press Y to start spinning the launcher wheel to target velocity.
-         * Press X to stop the launcher wheel.
-         * This gives manual control without automatically queuing a shot.
+         * All launcher velocity control goes through the launch() state machine.
+         * Button inputs set request flags, state machine decides actual velocity.
+         *
+         * Controls:
+         * - Y button: Request spin-up (pre-heat launcher for faster shots)
+         * - X button: Request stop (cancel spin-up, stop launcher)
+         * - Right bumper: Request shot (spin up + feed when ready)
          */
-        if (gamepad1.y) {
-            launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-        } else if (gamepad1.x) {
-            launcher.setVelocity(STOP_SPEED);
-        }
+        boolean requestSpinUp = gamepad1.y;
+        boolean requestStop = gamepad1.x;
+        boolean requestShot = gamepad1.rightBumperWasPressed();
+        launch(requestShot, requestSpinUp, requestStop);
 
         /*
-         * Now we call our "Launch" function.
-         */
-        launch(gamepad1.rightBumperWasPressed());
-
-        /*
-         * Show the state and motor powers
+         * STEP 5: TELEMETRY
          */
         telemetry.addData("Alliance", alliance);
         telemetry.addData("Launch State", launchState);
 
-        // Show alignment status
+        // Show alignment status using cached heading
         telemetry.addData("Align State", alignState);
         if (imu != null) {
-            double currentHeading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
             double targetHeading = (alliance == Alliance.RED)
                     ? RED_GOAL_PERPENDICULAR_HEADING_DEG
                     : BLUE_GOAL_PERPENDICULAR_HEADING_DEG;
-            double headingError = normalizeAngleDegrees(targetHeading - currentHeading);
+            double headingError = normalizeAngleDegrees(targetHeading - cachedHeadingDeg);
             telemetry.addData("Heading", "%.1f° → %.1f° (err: %.1f°)",
-                    currentHeading, targetHeading, headingError);
+                    cachedHeadingDeg, targetHeading, headingError);
         }
 
         // Show launch cooldown status
@@ -594,10 +612,6 @@ public class PickleTeleOp extends OpMode {
 
         /*
          * IMPORTANT: telemetry.update() must be called to push data to Driver Station
-         *
-         * Without this call, telemetry data is queued but never sent to the display.
-         * The Driver Station screen would show stale or no data. This is a common
-         * mistake that makes debugging difficult since you can't see what's happening.
          */
         telemetry.update();
     }
@@ -776,27 +790,62 @@ public class PickleTeleOp extends OpMode {
         return Math.copySign(value * value, value);
     }
 
-    void launch(boolean shotRequested) {
+    /*
+     * CENTRALIZED LAUNCHER CONTROL
+     *
+     * All launcher velocity decisions are made here to prevent conflicts.
+     * The state machine has full control over launcher motor and feeders.
+     *
+     * @param requestShot   Right bumper pressed - request a full launch sequence
+     * @param requestSpinUp Y button held - pre-spin the launcher (faster shots)
+     * @param requestStop   X button held - stop/cancel launcher
+     */
+    void launch(boolean requestShot, boolean requestSpinUp, boolean requestStop) {
+        // Handle stop request - can cancel from any state
+        if (requestStop) {
+            launchState = LaunchState.IDLE;
+            launcher.setVelocity(STOP_SPEED);
+            leftFeeder.setPower(STOP_SPEED);
+            rightFeeder.setPower(STOP_SPEED);
+            return;
+        }
+
         switch (launchState) {
             case IDLE:
-                // Only allow a new launch if cooldown period has elapsed
-                if (shotRequested && launchCooldownTimer.seconds() >= LAUNCH_COOLDOWN_SECONDS) {
+                // Manual spin-up request (Y button) - pre-heat launcher for faster shots
+                if (requestSpinUp) {
+                    launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+                }
+
+                // Shot request (Right bumper) - start full launch sequence
+                if (requestShot && launchCooldownTimer.seconds() >= LAUNCH_COOLDOWN_SECONDS) {
                     launchState = LaunchState.SPIN_UP;
                 }
                 break;
+
             case SPIN_UP:
+                // Keep launcher spinning at target velocity
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Check if we've reached minimum velocity for launch
                 if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY) {
                     launchState = LaunchState.LAUNCH;
                 }
                 break;
+
             case LAUNCH:
+                // Activate feeders to push ball into launcher
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);
                 feederTimer.reset();
                 launchState = LaunchState.LAUNCHING;
                 break;
+
             case LAUNCHING:
+                // Keep launcher at speed while feeding
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Wait for feed time to complete
                 if (feederTimer.seconds() > FEED_TIME_SECONDS) {
                     launchState = LaunchState.IDLE;
                     leftFeeder.setPower(STOP_SPEED);
@@ -808,19 +857,19 @@ public class PickleTeleOp extends OpMode {
     }
 
     /*
-     * AUTO-ALIGN TO GOAL PERPENDICULAR HEADING
+     * GET AUTO-ALIGN ROTATION COMMAND
      *
-     * This method handles the automatic rotation to face perpendicular to the goal zone border.
-     * When active, it overrides the manual rotation input and uses proportional control to
-     * smoothly rotate the robot to the target heading.
+     * This method calculates the rotation power needed to face perpendicular to the goal zone.
+     * Instead of directly applying motor powers (which would be overwritten by mecanumDrive),
+     * it RETURNS the rotation value to be passed into mecanumDrive().
      *
      * ALGORITHM:
      * 1. Get target heading based on alliance (135° for Red, 45° for Blue)
-     * 2. Get current heading from IMU
+     * 2. Use cached IMU heading (read once per loop for consistency)
      * 3. Calculate heading error (difference between target and current)
      * 4. Apply proportional control: rotate_power = Kp * error
      * 5. Clamp power to max alignment speed
-     * 6. Apply rotation power to motors
+     * 6. Return rotation power (not apply directly!)
      *
      * PROPORTIONAL CONTROL (P-controller):
      * - Error = Target - Current
@@ -828,12 +877,12 @@ public class PickleTeleOp extends OpMode {
      * - When far from target: high error → high rotation power
      * - When close to target: low error → low rotation power (prevents overshoot)
      *
-     * @return true if actively aligning (rotation being applied), false otherwise
+     * @return rotation power to pass to mecanumDrive(), or 0.0 if not aligning
      */
-    boolean autoAlign() {
+    double getAlignRotation() {
         // Only align if in ALIGNING state and IMU is available
         if (alignState != AlignState.ALIGNING || imu == null) {
-            return false;
+            return 0.0;
         }
 
         // Get target heading based on alliance
@@ -841,17 +890,13 @@ public class PickleTeleOp extends OpMode {
                 ? RED_GOAL_PERPENDICULAR_HEADING_DEG
                 : BLUE_GOAL_PERPENDICULAR_HEADING_DEG;
 
-        // Get current heading from IMU
-        double currentHeadingDeg = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
-
-        // Calculate heading error (normalized to -180 to 180 degrees)
-        double headingErrorDeg = normalizeAngleDegrees(targetHeadingDeg - currentHeadingDeg);
+        // Use cached heading (read once at start of loop)
+        double headingErrorDeg = normalizeAngleDegrees(targetHeadingDeg - cachedHeadingDeg);
 
         // Check if we're close enough - aligned!
         if (Math.abs(headingErrorDeg) <= ALIGN_TOLERANCE_DEG) {
             alignState = AlignState.ALIGNED;
-            // Apply a small holding rotation to maintain position
-            return false;
+            return 0.0;
         }
 
         // Apply proportional control for smooth rotation
@@ -868,40 +913,8 @@ public class PickleTeleOp extends OpMode {
             rotatePower = Math.copySign(MIN_ROTATION_POWER, rotatePower);
         }
 
-        // Apply rotation to motors (rotation only, no translation)
-        applyRotationOnly(rotatePower);
-
-        return true;
-    }
-
-    /*
-     * APPLY ROTATION-ONLY MOTOR POWERS
-     *
-     * This method applies power to the drive motors to rotate the robot in place
-     * without any forward/backward or strafing movement.
-     *
-     * For mecanum drive rotation:
-     * - Left motors get positive power (rotate CCW from top view)
-     * - Right motors get negative power
-     *
-     * @param rotatePower Rotation power (-1 to 1, positive = counter-clockwise)
-     */
-    void applyRotationOnly(double rotatePower) {
-        // For rotation only: left side positive, right side negative
-        // This makes positive rotatePower = counter-clockwise (increasing heading)
-        double leftPower = rotatePower;
-        double rightPower = -rotatePower;
-
-        frontLeft.setPower(leftPower);
-        backLeft.setPower(leftPower);
-        frontRight.setPower(rightPower);
-        backRight.setPower(rightPower);
-
-        // Update power variables for telemetry
-        frontLeftPower = leftPower;
-        backLeftPower = leftPower;
-        frontRightPower = rightPower;
-        backRightPower = rightPower;
+        // Return rotation power - mecanumDrive() will apply it along with translation
+        return rotatePower;
     }
 
     /*

@@ -1,15 +1,15 @@
-# L1 Auto-Align Button Guide
+# Left Bumper Auto-Align Guide
 
 > **Quick-rotate to the optimal launching angle** with a single button press.
 
 ## Table of Contents
 
-1. [What Does L1 Do?](#what-does-l1-do)
-2. [What L1 Does and Does NOT Do](#important-what-l1-does-and-does-not-do)
+1. [What Does Left Bumper Do?](#what-does-left-bumper-do)
+2. [What Auto-Align Does and Does NOT Do](#important-what-auto-align-does-and-does-not-do)
 3. [Understanding the IMU Limitation](#understanding-the-imu-limitation)
 4. [Driver Responsibilities](#driver-responsibilities)
 5. [Target Headings Explained](#target-headings-explained)
-6. [How to Use L1 — Step by Step](#how-to-use-l1--step-by-step)
+6. [How to Use Auto-Align — Step by Step](#how-to-use-auto-align--step-by-step)
 7. [State Machine Diagram](#state-machine-diagram)
 8. [Telemetry Reference](#telemetry-reference)
 9. [Troubleshooting](#troubleshooting)
@@ -19,16 +19,20 @@
 
 ---
 
-## What Does L1 Do?
+## What Does Left Bumper Do?
 
-**Hold L1 (Left Trigger)** → Robot automatically rotates to face **perpendicular to the goal zone border** for optimal ball launching.
+**Press Left Bumper** → Toggle auto-alignment ON/OFF. When enabled, the robot automatically rotates to face **perpendicular to the goal zone border** for optimal ball launching.
+
+**Cancel alignment by:**
+- Pressing Left Bumper again (toggle off)
+- Moving the right stick (manual rotation override)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     L1 AUTO-ALIGN IN ACTION                     │
+│                   AUTO-ALIGN IN ACTION                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│   BEFORE L1:                       AFTER L1:                    │
+│   BEFORE:                          AFTER:                       │
 │   Robot facing random direction    Robot facing goal opening    │
 │                                                                 │
 │          RED GOAL                        RED GOAL               │
@@ -41,16 +45,16 @@
 │         │ → │  Facing 60°              │ ↖ │  Facing 135°       │
 │         └───┘                          └───┘                    │
 │                                                                 │
-│   Driver holds L1...                   ALIGNED! Ready to fire   │
+│   Press Left Bumper...             ALIGNED! Ready to fire       │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Important: What L1 Does and Does NOT Do
+## Important: What Auto-Align Does and Does NOT Do
 
-### ✅ L1 DOES:
+### ✅ Auto-Align DOES:
 
 | Feature | Description |
 |---------|-------------|
@@ -59,7 +63,7 @@
 | **Target alliance goal** | 135° for RED, 45° for BLUE |
 | **Allow driving during align** | You can still move forward/backward and strafe |
 
-### ❌ L1 Does NOT:
+### ❌ Auto-Align Does NOT:
 
 | Limitation | Why |
 |------------|-----|
@@ -298,27 +302,28 @@ The goal zones have **45° angled borders**. To launch balls straight into the o
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                   L1 AUTO-ALIGN STATE MACHINE                   │
+│                   AUTO-ALIGN STATE MACHINE                      │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │                        ┌──────────┐                             │
-│                   ┌───▶│   IDLE   │◀───┐                        │
-│                   │    │          │    │                        │
-│                   │    └────┬─────┘    │                        │
-│                   │         │          │                        │
-│      L1 Released  │         │ L1 Pressed                        │
-│                   │         ▼          │                        │
-│                   │    ┌──────────┐    │                        │
-│                   │    │ ALIGNING │    │ L1 Released            │
-│                   │    │          │────┘                        │
-│                   │    │ Robot is │                             │
-│                   │    │ rotating │                             │
-│                   │    └────┬─────┘                             │
-│                   │         │                                   │
-│                   │         │ Within ±3° of target              │
-│                   │         ▼                                   │
-│                   │    ┌──────────┐                             │
-│                   └────│ ALIGNED  │                             │
+│              ┌────────▶│   IDLE   │◀────────┐                   │
+│              │         │          │         │                   │
+│              │         └────┬─────┘         │                   │
+│              │              │               │                   │
+│   Left Bumper│              │ Left Bumper   │ Left Bumper       │
+│   (toggle)   │              │ (toggle)      │ OR Right Stick    │
+│              │              ▼               │ (manual override) │
+│              │         ┌──────────┐         │                   │
+│              │         │ ALIGNING │─────────┘                   │
+│              │         │          │                             │
+│              │         │ Robot is │                             │
+│              │         │ rotating │                             │
+│              │         └────┬─────┘                             │
+│              │              │                                   │
+│              │              │ Within ±3° of target              │
+│              │              ▼                                   │
+│              │         ┌──────────┐                             │
+│              └─────────│ ALIGNED  │                             │
 │                        │          │                             │
 │                        │ Ready to │                             │
 │                        │ launch!  │                             │
@@ -326,7 +331,11 @@ The goal zones have **45° angled borders**. To launch balls straight into the o
 │                                                                 │
 │   IDLE     = Normal manual control                              │
 │   ALIGNING = Robot rotating toward target heading               │
-│   ALIGNED  = Target reached, holding position                   │
+│   ALIGNED  = Target reached, ready to fire                      │
+│                                                                 │
+│   CANCEL METHODS:                                               │
+│   - Press Left Bumper again (toggle off)                        │
+│   - Move right stick (manual rotation override)                 │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -433,24 +442,24 @@ final double ALIGN_HEADING_KP = 0.010;     // Was 0.015
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              L1 AUTO-ALIGN QUICK REFERENCE                      │
+│              AUTO-ALIGN QUICK REFERENCE                         │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  BEFORE MATCH:                                                  │
-│    Press X = BLUE (target 45°)                                  │
-│    Press B = RED (target 135°)                                  │
+│    Press A = RED (target 135°)                                  │
+│    Press B = BLUE (target 45°)                                  │
 │                                                                 │
 │  DURING MATCH:                                                  │
 │    1. Drive to launching position (YOU control this)            │
-│    2. Hold L1 (Left Trigger)                                    │
+│    2. Press Left Bumper (toggles alignment ON)                  │
 │    3. Robot auto-rotates to target heading                      │
 │    4. Wait for "Align State: ALIGNED"                           │
-│    5. Press RB to launch                                        │
-│    6. Release L1 to return to manual control                    │
+│    5. Press Right Bumper to launch                              │
+│    6. Press Left Bumper again OR move right stick to cancel     │
 │                                                                 │
 │  REMEMBER:                                                      │
-│    ✅ L1 controls ROTATION only                                 │
-│    ❌ L1 does NOT know robot POSITION                           │
+│    ✅ Auto-align controls ROTATION only                         │
+│    ❌ Auto-align does NOT know robot POSITION                   │
 │    👤 YOU must drive to the right spot                          │
 │                                                                 │
 │  TARGET HEADINGS:                                               │
@@ -460,6 +469,10 @@ final double ALIGN_HEADING_KP = 0.010;     // Was 0.015
 │  TELEMETRY TO WATCH:                                            │
 │    Align State: IDLE → ALIGNING → ALIGNED                       │
 │    Heading: current° → target° (error°)                         │
+│                                                                 │
+│  CANCEL ALIGNMENT:                                              │
+│    - Press Left Bumper again (toggle off)                       │
+│    - Move right stick (manual override)                         │
 │                                                                 │
 │  IMU = COMPASS (knows direction, NOT location)                  │
 │                                                                 │
@@ -472,13 +485,15 @@ final double ALIGN_HEADING_KP = 0.010;     // Was 0.015
 
 | Question | Answer |
 |----------|--------|
-| What does L1 do? | Auto-rotates robot to face perpendicular to goal |
+| What does Left Bumper do? | Toggles auto-align ON/OFF |
+| How does auto-align work? | Auto-rotates robot to face perpendicular to goal |
 | Does it know position? | ❌ No — IMU only provides heading |
 | Who positions the robot? | 👤 The driver |
 | Target for RED? | 135° (northwest) |
 | Target for BLUE? | 45° (northeast) |
 | When is it aligned? | Error within ±3° |
 | Can I drive during align? | ✅ Yes — forward, backward, strafe work |
+| How to cancel? | Left Bumper again OR move right stick |
 
 ---
 

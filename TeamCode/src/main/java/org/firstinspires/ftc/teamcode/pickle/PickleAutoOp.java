@@ -54,6 +54,9 @@ import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
+import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
+import org.firstinspires.ftc.teamcode.pickle.field.DecodeField;
+
 import java.util.List;
 
 /*
@@ -290,15 +293,9 @@ public class PickleAutoOp extends OpMode
     private double goalAlignNudgeDistanceIn = 0.0;
 
     /*
-     * Here we create an enum not to create a state machine, but to capture which alliance we are on.
-     */
-    private enum Alliance {
-        RED,
-        BLUE;
-    }
-
-    /*
-     * When we create the instance of our enum we can also assign a default state.
+     * Alliance selection - now uses the shared Alliance enum from the field package.
+     * This allows consistent alliance handling across all OpModes and enables access
+     * to alliance-specific field positions via DecodeField.getGoalCenter(alliance), etc.
      */
     private Alliance alliance = Alliance.RED;
 
@@ -433,6 +430,7 @@ public class PickleAutoOp extends OpMode
         telemetry.addData("Press X", "for BLUE");
         telemetry.addData("Press B", "for RED");
         telemetry.addData("Selected Alliance", alliance);
+        telemetry.addData("Goal AprilTag ID", DecodeField.getGoalAprilTagId(alliance));
     }
 
     /*
@@ -1091,11 +1089,15 @@ public class PickleAutoOp extends OpMode
      */
     private void telemetryAprilTag() {
         List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        int expectedGoalId = DecodeField.getGoalAprilTagId(alliance);
+
         telemetry.addData("# AprilTags Detected", currentDetections.size());
+        telemetry.addData("Looking for Goal Tag", "ID " + expectedGoalId + " (" + alliance + ")");
 
         AprilTagDetection goalTag = getGoalDetection();
         if (goalTag != null && goalTag.metadata != null) {
-            telemetry.addLine(String.format("GOAL TAG: (ID %d) %s", goalTag.id, goalTag.metadata.name));
+            String matchStatus = (goalTag.id == expectedGoalId) ? " [OUR GOAL]" : " [OTHER GOAL]";
+            telemetry.addLine(String.format("GOAL TAG: (ID %d) %s%s", goalTag.id, goalTag.metadata.name, matchStatus));
             telemetry.addLine(String.format("Goal RBE: %6.1f %6.1f %6.1f (inch, deg, deg)",
                     goalTag.ftcPose.range, goalTag.ftcPose.bearing, goalTag.ftcPose.elevation));
         } else {
@@ -1106,7 +1108,9 @@ public class PickleAutoOp extends OpMode
         for (AprilTagDetection detection : currentDetections) {
             if (detection.metadata != null) {
                 // Tag is in the library - we have full pose information
-                telemetry.addLine(String.format("\n==== (ID %d) %s", detection.id, detection.metadata.name));
+                String tagType = DecodeField.isObeliskTag(detection.id) ? " [OBELISK-IGNORE]" :
+                                 DecodeField.isGoalTag(detection.id) ? " [GOAL]" : "";
+                telemetry.addLine(String.format("\n==== (ID %d) %s%s", detection.id, detection.metadata.name, tagType));
                 telemetry.addLine(String.format("XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
                 telemetry.addLine(String.format("PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
                 telemetry.addLine(String.format("RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
@@ -1126,37 +1130,66 @@ public class PickleAutoOp extends OpMode
     /**
      * Returns the best "goal" AprilTag detection to use for navigation, or null if none are visible.
      *
-     * Why this exists:
-     * - DECODE fields include tags on the Obelisk (motif/pattern) and tags on/near the Goal.
-     * - The Obelisk tags should not be used for localization to approach the Goal.
+     * <p>Why this exists:</p>
+     * <ul>
+     *   <li>DECODE fields include tags on the Obelisk (IDs 21, 22, 23) and goals (Red=24, Blue=20)</li>
+     *   <li>Obelisk tags should NOT be used for localization to approach the Goal</li>
+     * </ul>
      *
-     * Selection rule (simple and effective):
-     * - Ignore detections that have no metadata (unknown tag).
-     * - Ignore detections whose metadata name contains "Obelisk".
-     * - From the remaining detections, pick the one with the smallest range (closest visible goal tag).
+     * <p>Selection priority:</p>
+     * <ol>
+     *   <li>First, look for the current alliance's goal tag (most reliable)</li>
+     *   <li>If not found, accept any goal tag (opponent's goal might be visible)</li>
+     *   <li>Always reject Obelisk tags using DecodeField.isObeliskTag()</li>
+     * </ol>
+     *
+     * @return The best goal AprilTag detection, or null if none visible
      */
     private AprilTagDetection getGoalDetection() {
         if (aprilTag == null) {
             return null;
         }
+
         List<AprilTagDetection> detections = aprilTag.getDetections();
-        AprilTagDetection best = null;
-        double bestRange = Double.POSITIVE_INFINITY;
+        AprilTagDetection allianceGoalTag = null;
+        AprilTagDetection anyGoalTag = null;
+        double anyGoalRange = Double.POSITIVE_INFINITY;
+
+        // Get the expected goal tag ID for our alliance
+        int expectedTagId = DecodeField.getGoalAprilTagId(alliance);
 
         for (AprilTagDetection detection : detections) {
-            if (detection.metadata == null || detection.metadata.name == null) {
+            // Skip unknown tags
+            if (detection.metadata == null || detection.ftcPose == null) {
                 continue;
             }
-            String name = detection.metadata.name;
-            if (name.toLowerCase().contains("obelisk")) {
+
+            // Skip Obelisk tags - they should NOT be used for navigation
+            if (DecodeField.isObeliskTag(detection.id)) {
                 continue;
             }
-            if (detection.ftcPose != null && detection.ftcPose.range < bestRange) {
-                best = detection;
-                bestRange = detection.ftcPose.range;
+
+            // Check if this is a goal tag
+            if (DecodeField.isGoalTag(detection.id)) {
+                // Prioritize our alliance's goal tag
+                if (detection.id == expectedTagId) {
+                    // Found our alliance's goal - use it immediately if it's the first,
+                    // or if it's closer than a previous detection
+                    if (allianceGoalTag == null || detection.ftcPose.range < allianceGoalTag.ftcPose.range) {
+                        allianceGoalTag = detection;
+                    }
+                } else {
+                    // This is the opponent's goal tag - track it as backup
+                    if (detection.ftcPose.range < anyGoalRange) {
+                        anyGoalTag = detection;
+                        anyGoalRange = detection.ftcPose.range;
+                    }
+                }
             }
         }
-        return best;
+
+        // Prefer our alliance's goal, fall back to any goal
+        return allianceGoalTag != null ? allianceGoalTag : anyGoalTag;
     }
 }
 

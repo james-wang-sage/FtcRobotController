@@ -14,7 +14,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.teamcode.pickle.config.PickleHardwareNames;
 import org.firstinspires.ftc.teamcode.pickle.drive.MecanumDriveHelper;
 import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
 import org.firstinspires.ftc.teamcode.pickle.field.DecodeField;
@@ -23,7 +23,6 @@ import org.firstinspires.ftc.teamcode.pickle.geometry.Pose2d;
 import org.firstinspires.ftc.teamcode.pickle.geometry.Translation2d;
 import org.firstinspires.ftc.teamcode.pickle.odometry.MecanumOdometry;
 import org.firstinspires.ftc.teamcode.pickle.path.PathFollower;
-import org.firstinspires.ftc.teamcode.pickle.path.Waypoint;
 import org.firstinspires.ftc.teamcode.pickle.vision.AprilTagLocalizer;
 
 /**

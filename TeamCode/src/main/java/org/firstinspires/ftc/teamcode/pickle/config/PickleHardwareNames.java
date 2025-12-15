@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.pickle;
+package org.firstinspires.ftc.teamcode.pickle.config;
 
 /**
  * Central place for Driver Station Robot Configuration device names used by Pickle OpModes.

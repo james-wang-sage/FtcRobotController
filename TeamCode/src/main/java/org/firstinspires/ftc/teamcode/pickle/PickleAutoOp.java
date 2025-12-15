@@ -40,10 +40,14 @@ import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.vision.VisionPortal;
@@ -173,6 +177,26 @@ public class PickleAutoOp extends OpMode
      */
     final boolean INVERT_TAG_TURN = false;
 
+    /*
+     * ========== SAFETY TIMEOUTS ==========
+     *
+     * Maximum time allowed for any single drive or rotate operation.
+     * If the robot hasn't reached its target position within this time,
+     * the operation will complete anyway to prevent hanging.
+     */
+    final double DRIVE_TIMEOUT_SECONDS = 5.0;
+    final double ROTATE_TIMEOUT_SECONDS = 4.0;
+
+    /*
+     * ========== IMU CONFIGURATION ==========
+     *
+     * The IMU provides accurate heading information independent of wheel slippage.
+     * Set USE_IMU_FOR_ROTATION to false to fall back to encoder-only rotation
+     * if the IMU is not available or not working.
+     */
+    final boolean USE_IMU_FOR_ROTATION = true;
+    final double IMU_HEADING_TOLERANCE_DEG = 2.0;
+
     int shotsToFire = 3; //The number of shots to fire in this auto.
 
     double robotRotationAngle = 45;
@@ -186,6 +210,7 @@ public class PickleAutoOp extends OpMode
     private ElapsedTime feederTimer = new ElapsedTime();
     private ElapsedTime driveTimer = new ElapsedTime();
     private ElapsedTime stateTimer = new ElapsedTime();
+    private ElapsedTime operationTimer = new ElapsedTime(); // Timeout protection for drive/rotate
 
     // Declare OpMode members - 4 mecanum drive motors (matching PickleTeleOp)
     private DcMotor frontLeft = null;
@@ -195,6 +220,11 @@ public class PickleAutoOp extends OpMode
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
+
+    // IMU for accurate heading control (falls back to encoders if unavailable)
+    private IMU imu = null;
+    private boolean imuAvailable = false;
+    private double targetHeadingDeg = 0.0; // Used for IMU-based rotation
 
     /*
      * AprilTag vision components. The AprilTagProcessor handles the detection of AprilTags
@@ -360,6 +390,13 @@ public class PickleAutoOp extends OpMode
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
         /*
+         * Initialize the IMU for accurate heading control.
+         * The IMU is built into the REV Control Hub and provides gyroscope data.
+         * If initialization fails, we fall back to encoder-based rotation.
+         */
+        initIMU();
+
+        /*
          * Initialize the AprilTag processor and VisionPortal.
          * The "easy" methods create default configurations that work well for most use cases.
          * The AprilTag processor will automatically detect any visible AprilTags and provide
@@ -438,6 +475,7 @@ public class PickleAutoOp extends OpMode
                 if (stateTimer.seconds() >= START_DELAY_SECONDS) {
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for drive operation
                     stateTimer.reset();
                     autonomousState = AutonomousState.DRIVE_CLEAR_START;
                 }
@@ -451,6 +489,7 @@ public class PickleAutoOp extends OpMode
                 if (drive(DRIVE_SPEED, DRIVE_CLEAR_START_IN, DistanceUnit.INCH, 0.25)) {
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for rotate operation
                     autonomousState = AutonomousState.TURN_TOWARD_GOAL;
                 }
                 break;
@@ -464,6 +503,7 @@ public class PickleAutoOp extends OpMode
                 if (rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES, 0.25)) {
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for drive operation
                     autonomousState = AutonomousState.DRIVE_TO_CLOSE_SHOT;
                 }
                 break;
@@ -476,6 +516,7 @@ public class PickleAutoOp extends OpMode
                 if (drive(0.30, DRIVE_TO_CLOSE_SHOT_IN, DistanceUnit.INCH, 0.25)) {
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for alignment operations
                     stateTimer.reset();
                     goalAlignAction = GoalAlignAction.NONE;
                     autonomousState = AutonomousState.ALIGN_WITH_GOAL_TAG;
@@ -544,6 +585,7 @@ public class PickleAutoOp extends OpMode
                     goalAlignAction = GoalAlignAction.TURN_NUDGE;
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for nudge
                     break;
                 }
 
@@ -555,6 +597,7 @@ public class PickleAutoOp extends OpMode
                     goalAlignAction = GoalAlignAction.DRIVE_NUDGE;
                     resetDriveEncoders();
                     driveTimer.reset();
+                    operationTimer.reset(); // Start timeout tracking for nudge
                     break;
                 }
 
@@ -588,6 +631,7 @@ public class PickleAutoOp extends OpMode
                         launcher.setVelocity(0);
                         resetDriveEncoders();
                         driveTimer.reset();
+                        operationTimer.reset(); // Start timeout tracking for park operation
                         autonomousState = AutonomousState.PARK_FOR_TELEOP;
                     }
                 }
@@ -615,6 +659,7 @@ public class PickleAutoOp extends OpMode
         telemetry.addData("AutoState", autonomousState);
         telemetry.addData("LauncherState", launchState);
         telemetry.addData("Alliance", alliance);
+        telemetry.addData("IMU", imuAvailable ? "Active" : "Fallback to encoders");
         telemetry.addData("Front Motors Current", "L:%d  R:%d",
                 frontLeft.getCurrentPosition(), frontRight.getCurrentPosition());
         telemetry.addData("Back Motors Current", "L:%d  R:%d",
@@ -688,10 +733,12 @@ public class PickleAutoOp extends OpMode
      * @param distanceUnit the unit of measurement for distance
      * @param holdSeconds the number of seconds to wait at position before returning true.
      * @return "true" if the motors are within tolerance of the target position for more than
-     * holdSeconds. "false" otherwise.
+     * holdSeconds, OR if the operation times out. "false" otherwise.
      */
     boolean drive(double speed, double distance, DistanceUnit distanceUnit, double holdSeconds) {
         final double TOLERANCE_MM = 10;
+        final double toleranceTicks = TOLERANCE_MM * TICKS_PER_MM;
+
         /*
          * In this function we use a DistanceUnits. This is a class that the FTC SDK implements
          * which allows us to accept different input units depending on the user's preference.
@@ -720,16 +767,97 @@ public class PickleAutoOp extends OpMode
         backRight.setPower(speed);
 
         /*
-         * Here we check if we are within tolerance of our target position or not. We calculate the
-         * absolute error (distance from our setpoint regardless of if it is positive or negative)
-         * and compare that to our tolerance. If we have not reached our target yet, then we reset
-         * the driveTimer. Only after we reach the target can the timer count higher than our
-         * holdSeconds variable.
-         *
-         * We use the front left motor as the reference for position checking.
+         * Check if ALL motors are within tolerance of their target position.
+         * Previously we only checked front left, which could cause issues if one motor
+         * was lagging or stuck. Now we verify all 4 motors have reached their targets.
          */
-        if(Math.abs(targetPosition - frontLeft.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
+        boolean allMotorsAtTarget =
+                Math.abs(targetPosition - frontLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(targetPosition - frontRight.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(targetPosition - backLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(targetPosition - backRight.getCurrentPosition()) <= toleranceTicks;
+
+        if (!allMotorsAtTarget) {
             driveTimer.reset();
+        }
+
+        /*
+         * SAFETY: If we've been trying to reach the target for too long, give up and continue.
+         * This prevents the autonomous from hanging if a motor fails or gets stuck.
+         */
+        if (operationTimer.seconds() > DRIVE_TIMEOUT_SECONDS) {
+            telemetry.addData("WARNING", "Drive timeout - continuing anyway");
+            return true;
+        }
+
+        return (driveTimer.seconds() > holdSeconds);
+    }
+
+    /**
+     * Strafes the robot laterally (sideways) using mecanum drive.
+     * This is the key advantage of mecanum wheels - the ability to move sideways without rotating.
+     *
+     * Mecanum strafe pattern:
+     * - Strafe RIGHT: FL forward, FR backward, BL backward, BR forward
+     * - Strafe LEFT:  FL backward, FR forward, BL forward, BR backward
+     *
+     * @param speed From 0-1
+     * @param distance In specified unit (positive = right, negative = left)
+     * @param distanceUnit the unit of measurement for distance
+     * @param holdSeconds the number of seconds to wait at position before returning true.
+     * @return "true" if the motors are within tolerance of the target position for more than
+     * holdSeconds, OR if the operation times out. "false" otherwise.
+     */
+    boolean strafe(double speed, double distance, DistanceUnit distanceUnit, double holdSeconds) {
+        final double TOLERANCE_MM = 10;
+        final double toleranceTicks = TOLERANCE_MM * TICKS_PER_MM;
+
+        /*
+         * Mecanum strafe requires a correction factor because lateral movement is less
+         * efficient than forward movement due to roller geometry. Typical values are 1.1-1.4.
+         * This should be tuned on your specific robot.
+         */
+        final double STRAFE_CORRECTION = 1.2;
+
+        double targetPosition = (distanceUnit.toMm(distance) * TICKS_PER_MM * STRAFE_CORRECTION);
+
+        /*
+         * Mecanum strafe pattern:
+         * - To strafe RIGHT: FL +, FR -, BL -, BR +
+         * - To strafe LEFT:  FL -, FR +, BL +, BR -
+         *
+         * With positive distance = right, we use: FL+, FR-, BL-, BR+
+         */
+        frontLeft.setTargetPosition((int) targetPosition);
+        frontRight.setTargetPosition((int) -targetPosition);
+        backLeft.setTargetPosition((int) -targetPosition);
+        backRight.setTargetPosition((int) targetPosition);
+
+        frontLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeft.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRight.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+
+        frontLeft.setPower(speed);
+        frontRight.setPower(speed);
+        backLeft.setPower(speed);
+        backRight.setPower(speed);
+
+        // Check if ALL motors are within tolerance of their target position
+        boolean allMotorsAtTarget =
+                Math.abs(targetPosition - frontLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(-targetPosition - frontRight.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(-targetPosition - backLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(targetPosition - backRight.getCurrentPosition()) <= toleranceTicks;
+
+        if (!allMotorsAtTarget) {
+            driveTimer.reset();
+        }
+
+        // Safety timeout
+        if (operationTimer.seconds() > DRIVE_TIMEOUT_SECONDS) {
+            telemetry.addData("WARNING", "Strafe timeout - continuing anyway");
+            return true;
         }
 
         return (driveTimer.seconds() > holdSeconds);
@@ -739,15 +867,98 @@ public class PickleAutoOp extends OpMode
      * Rotates the robot in place using all 4 mecanum motors.
      * For rotation, left side motors go opposite direction from right side motors.
      *
+     * If the IMU is available and USE_IMU_FOR_ROTATION is true, this method uses closed-loop
+     * heading control for accurate rotation. Otherwise, it falls back to encoder-based rotation.
+     *
      * @param speed From 0-1
      * @param angle the amount that the robot should rotate (positive = clockwise when viewed from above)
      * @param angleUnit the unit that angle is in
      * @param holdSeconds the number of seconds to wait at position before returning true.
-     * @return True if the motors are within tolerance of the target position for more than
-     *         holdSeconds. False otherwise.
+     * @return True if the robot is within tolerance of the target heading for more than
+     *         holdSeconds, OR if the operation times out. False otherwise.
      */
-    boolean rotate(double speed, double angle, AngleUnit angleUnit, double holdSeconds){
+    boolean rotate(double speed, double angle, AngleUnit angleUnit, double holdSeconds) {
+        double angleDeg = angleUnit.toDegrees(angle);
+
+        /*
+         * If IMU is available, use closed-loop heading control for more accurate rotation.
+         * The IMU measures actual heading independent of wheel slippage.
+         */
+        if (USE_IMU_FOR_ROTATION && imuAvailable && imu != null) {
+            return rotateWithIMU(speed, angleDeg, holdSeconds);
+        } else {
+            return rotateWithEncoders(speed, angleDeg, holdSeconds);
+        }
+    }
+
+    /**
+     * IMU-based rotation: Uses gyroscope feedback for accurate heading control.
+     * This is more accurate than encoder-based rotation because it's not affected by wheel slip.
+     */
+    private boolean rotateWithIMU(double speed, double angleDeg, double holdSeconds) {
+        // Get current heading and calculate target
+        YawPitchRollAngles orientation = imu.getRobotYawPitchRollAngles();
+        double currentHeading = orientation.getYaw(AngleUnit.DEGREES);
+
+        // On first call for this rotation, set the target heading
+        // (We detect "first call" by checking if targetHeadingDeg is still at its reset value)
+        if (driveTimer.seconds() < 0.05) {
+            targetHeadingDeg = currentHeading + angleDeg;
+            // Normalize to -180 to +180
+            while (targetHeadingDeg > 180) targetHeadingDeg -= 360;
+            while (targetHeadingDeg < -180) targetHeadingDeg += 360;
+        }
+
+        double headingError = targetHeadingDeg - currentHeading;
+        // Normalize error to -180 to +180
+        while (headingError > 180) headingError -= 360;
+        while (headingError < -180) headingError += 360;
+
+        // Apply power proportional to error, but clamped to the requested speed
+        double turnPower = Math.copySign(Math.min(Math.abs(headingError) / 45.0, 1.0) * speed, headingError);
+
+        // For rotation: left side goes opposite of right side
+        frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+        frontLeft.setPower(-turnPower);
+        backLeft.setPower(-turnPower);
+        frontRight.setPower(turnPower);
+        backRight.setPower(turnPower);
+
+        // Check if we're within tolerance
+        if (Math.abs(headingError) > IMU_HEADING_TOLERANCE_DEG) {
+            driveTimer.reset();
+        } else {
+            // Stop motors when at target
+            frontLeft.setPower(0);
+            frontRight.setPower(0);
+            backLeft.setPower(0);
+            backRight.setPower(0);
+        }
+
+        // Safety timeout
+        if (operationTimer.seconds() > ROTATE_TIMEOUT_SECONDS) {
+            telemetry.addData("WARNING", "Rotate timeout - continuing anyway");
+            frontLeft.setPower(0);
+            frontRight.setPower(0);
+            backLeft.setPower(0);
+            backRight.setPower(0);
+            return true;
+        }
+
+        return (driveTimer.seconds() > holdSeconds);
+    }
+
+    /**
+     * Encoder-based rotation: Fallback when IMU is not available.
+     * Uses calculated arc length based on track width to achieve the requested rotation.
+     */
+    private boolean rotateWithEncoders(double speed, double angleDeg, double holdSeconds) {
         final double TOLERANCE_MM = 10;
+        final double toleranceTicks = TOLERANCE_MM * TICKS_PER_MM;
 
         /*
          * Here we establish the number of mm that our drive wheels need to cover to create the
@@ -758,14 +969,15 @@ public class PickleAutoOp extends OpMode
          * need to travel, we just need to multiply the requested angle in radians by the radius
          * of our turning circle.
          */
-        double targetMm = angleUnit.toRadians(angle)*(TRACK_WIDTH_MM/2);
+        double angleRad = Math.toRadians(angleDeg);
+        double targetMm = angleRad * (TRACK_WIDTH_MM / 2);
 
         /*
          * For rotation, left side motors go in the opposite direction from right side motors.
          * This is the same for mecanum as it was for tank drive.
          */
-        double leftTargetPosition = -(targetMm*TICKS_PER_MM);
-        double rightTargetPosition = targetMm*TICKS_PER_MM;
+        double leftTargetPosition = -(targetMm * TICKS_PER_MM);
+        double rightTargetPosition = targetMm * TICKS_PER_MM;
 
         // Set target positions - left side negative, right side positive for rotation
         frontLeft.setTargetPosition((int) leftTargetPosition);
@@ -783,9 +995,21 @@ public class PickleAutoOp extends OpMode
         backLeft.setPower(speed);
         backRight.setPower(speed);
 
-        // Check if front left motor is within tolerance
-        if((Math.abs(leftTargetPosition - frontLeft.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
+        // Check if ALL motors are within tolerance
+        boolean allMotorsAtTarget =
+                Math.abs(leftTargetPosition - frontLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(leftTargetPosition - backLeft.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(rightTargetPosition - frontRight.getCurrentPosition()) <= toleranceTicks &&
+                Math.abs(rightTargetPosition - backRight.getCurrentPosition()) <= toleranceTicks;
+
+        if (!allMotorsAtTarget) {
             driveTimer.reset();
+        }
+
+        // Safety timeout
+        if (operationTimer.seconds() > ROTATE_TIMEOUT_SECONDS) {
+            telemetry.addData("WARNING", "Rotate timeout - continuing anyway");
+            return true;
         }
 
         return (driveTimer.seconds() > holdSeconds);
@@ -803,19 +1027,61 @@ public class PickleAutoOp extends OpMode
     }
 
     /**
+     * Initialize the IMU for accurate heading control.
+     * The IMU is built into the REV Control Hub and provides gyroscope data independent
+     * of wheel slippage. If initialization fails, imuAvailable will be false and the
+     * robot will fall back to encoder-based rotation.
+     */
+    private void initIMU() {
+        try {
+            imu = hardwareMap.get(IMU.class, PickleHardwareNames.IMU_NAME);
+
+            // Define the hub orientation. Adjust these parameters based on how your
+            // Control Hub is mounted on the robot.
+            RevHubOrientationOnRobot.LogoFacingDirection logoDirection =
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP;
+            RevHubOrientationOnRobot.UsbFacingDirection usbDirection =
+                    RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
+
+            RevHubOrientationOnRobot orientationOnRobot =
+                    new RevHubOrientationOnRobot(logoDirection, usbDirection);
+
+            imu.initialize(new IMU.Parameters(orientationOnRobot));
+            imu.resetYaw(); // Start with heading = 0
+            imuAvailable = true;
+            telemetry.addData("IMU", "Initialized successfully");
+        } catch (Exception e) {
+            imu = null;
+            imuAvailable = false;
+            telemetry.addData("IMU", "Init failed - using encoder rotation: " + e.getMessage());
+        }
+    }
+
+    /**
      * Initialize the AprilTag processor and vision portal.
      * This uses the "easy" creation methods which provide sensible defaults.
      * The camera name "Webcam 1" must match the name configured in the robot configuration.
+     *
+     * If initialization fails (camera not connected, wrong name, etc.), the autonomous
+     * will continue using dead-reckoning only.
      */
     private void initAprilTag() {
-        // Create the AprilTag processor using easy defaults.
-        // This automatically configures tag family, decimation, and other parameters.
-        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+        try {
+            // Create the AprilTag processor using easy defaults.
+            // This automatically configures tag family, decimation, and other parameters.
+            aprilTag = AprilTagProcessor.easyCreateWithDefaults();
 
-        // Create the vision portal using easy defaults with a webcam.
-        // The webcam name must match the configuration in the Driver Station.
-        visionPortal = VisionPortal.easyCreateWithDefaults(
-                hardwareMap.get(WebcamName.class, PickleHardwareNames.WEBCAM_NAME), aprilTag);
+            // Create the vision portal using easy defaults with a webcam.
+            // The webcam name must match the configuration in the Driver Station.
+            visionPortal = VisionPortal.easyCreateWithDefaults(
+                    hardwareMap.get(WebcamName.class, PickleHardwareNames.WEBCAM_NAME), aprilTag);
+
+            telemetry.addData("Camera", "Initialized successfully");
+        } catch (Exception e) {
+            aprilTag = null;
+            visionPortal = null;
+            telemetry.addData("Camera", "Init failed - using dead reckoning: " + e.getMessage());
+        }
     }
 
     /**
@@ -855,35 +1121,6 @@ public class PickleAutoOp extends OpMode
         telemetry.addLine("\nkey:\nXYZ = X (Right), Y (Forward), Z (Up) dist.");
         telemetry.addLine("PRY = Pitch, Roll & Yaw (XYZ Rotation)");
         telemetry.addLine("RBE = Range, Bearing & Elevation");
-    }
-
-    /**
-     * Gets the first detected AprilTag, or null if none detected.
-     * This is a helper method for using AprilTag detection in autonomous navigation.
-     * @return The first AprilTagDetection, or null if no tags are visible.
-     */
-    private AprilTagDetection getFirstDetection() {
-        List<AprilTagDetection> detections = aprilTag.getDetections();
-        if (!detections.isEmpty()) {
-            return detections.get(0);
-        }
-        return null;
-    }
-
-    /**
-     * Gets a specific AprilTag detection by ID, or null if not found.
-     * Useful for targeting a specific tag during autonomous navigation.
-     * @param targetId The ID of the AprilTag to find.
-     * @return The AprilTagDetection with the specified ID, or null if not found.
-     */
-    private AprilTagDetection getDetectionById(int targetId) {
-        List<AprilTagDetection> detections = aprilTag.getDetections();
-        for (AprilTagDetection detection : detections) {
-            if (detection.id == targetId) {
-                return detection;
-            }
-        }
-        return null;
     }
 
     /**

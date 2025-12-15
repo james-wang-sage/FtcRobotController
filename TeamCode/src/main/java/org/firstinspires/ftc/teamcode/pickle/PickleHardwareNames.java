@@ -23,5 +23,8 @@ public final class PickleHardwareNames {
 
     // Vision
     public static final String WEBCAM_NAME = "Webcam 1";
+
+    // IMU (built into REV Control Hub / Expansion Hub)
+    public static final String IMU_NAME = "imu";
 }
 

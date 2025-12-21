@@ -141,8 +141,8 @@ public class PickleTeleOp extends OpMode {
      * 3. Set MIN_VELOCITY about 50-100 ticks below TARGET for reliability
      * 4. Monitor telemetry "Launcher Speed" to see actual velocity
      */
-    final double LAUNCHER_TARGET_VELOCITY = 1400;  // Target speed in encoder ticks/second
-    final double LAUNCHER_MIN_VELOCITY = 1300;     // Minimum speed before allowing launch
+    final double LAUNCHER_TARGET_VELOCITY = 1100;  // Target speed in encoder ticks/second
+    final double LAUNCHER_MIN_VELOCITY = 1000;     // Minimum speed before allowing launch
 
     /*
      * AUTO-ALIGN HEADING CONSTANTS
@@ -359,18 +359,16 @@ public class PickleTeleOp extends OpMode {
          */
 
         /*
-         * Set drive motors to RUN_USING_ENCODER for more consistent and controllable driving.
-         * This provides closed-loop velocity control that maintains constant speed even as
-         * battery voltage drops or the robot encounters varying loads.
+         * Set drive motors to RUN_WITHOUT_ENCODER for maximum speed (raw power control).
+         * This matches PickleAutoHolonomic for consistent performance between Auto and TeleOp.
          *
-         * IMPORTANT: Make sure your drive motor encoders are properly connected!
-         * If the robot doesn't respond to controls after this change, check that encoder
-         * cables are plugged into the motor ports (not separate encoder ports).
+         * RUN_WITHOUT_ENCODER = direct power control, maximum speed
+         * RUN_USING_ENCODER = velocity-controlled, consistent but slower
          */
-        frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        frontRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        backLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        backRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
         /*
          * Here we set our launcher to the RUN_USING_ENCODER runmode.
@@ -847,8 +845,9 @@ public class PickleTeleOp extends OpMode {
      * Math.copySign ensures negative inputs produce negative outputs.
      */
     double shapeInput(double value) {
-        // Square the magnitude, preserve the sign
-        return Math.copySign(value * value, value);
+        // Linear response - no input shaping for maximum speed
+        // Previously: value² which reduced 70% stick to 49% power
+        return value;
     }
 
     /*

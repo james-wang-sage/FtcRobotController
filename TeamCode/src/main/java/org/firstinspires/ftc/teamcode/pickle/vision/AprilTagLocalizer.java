@@ -60,7 +60,7 @@ import java.util.List;
  * <pre>
  * // In init()
  * localizer = new AprilTagLocalizer(hardwareMap, "Webcam 1");
- * localizer.setCameraPosition(200, 0, 150); // Camera 200mm forward, 150mm up
+ * localizer.setCameraPosition(0, 0, 457.2); // Camera centered, 18 inches (457.2mm) up
  *
  * // In loop()
  * Pose2d visionPose = localizer.getEstimatedPose(alliance);
@@ -75,9 +75,10 @@ public class AprilTagLocalizer {
     private VisionPortal visionPortal;
 
     // Camera mounting position relative to robot center (in mm)
-    private double cameraXOffset = 0;    // Forward from center
-    private double cameraYOffset = 0;    // Left from center
-    private double cameraZOffset = 200;  // Height above ground
+    // Camera is mounted front-center at the highest frame (18 inches up)
+    private double cameraXOffset = 0;    // Forward from center (front-mounted, centered on frame)
+    private double cameraYOffset = 0;    // Left from center (centered)
+    private double cameraZOffset = 457.2;  // Height above ground (18 inches = 457.2mm)
     private double cameraPitch = 0;      // Tilt angle in radians (negative = looking down)
     private double cameraYaw = 0;        // Rotation in radians (positive = turned left)
 

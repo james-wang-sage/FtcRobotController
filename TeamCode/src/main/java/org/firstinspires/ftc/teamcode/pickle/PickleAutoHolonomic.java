@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.pickle;
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -70,6 +71,7 @@ import org.firstinspires.ftc.teamcode.pickle.vision.AprilTagLocalizer;
  * Start with the defaults and adjust based on robot testing.</p>
  */
 @Autonomous(name = "PickleAutoHolonomic", group = "StarterBot")
+@Disabled
 public class PickleAutoHolonomic extends OpMode {
 
     // ========== TUNING CONSTANTS ==========
@@ -263,11 +265,11 @@ public class PickleAutoHolonomic extends OpMode {
         // Create AprilTag localizer
         try {
             aprilTagLocalizer = new AprilTagLocalizer(hardwareMap, PickleHardwareNames.WEBCAM_NAME);
-            // Configure camera position on robot (adjust these for your robot!)
+            // Configure camera position on robot (front-center, highest frame at 18")
             aprilTagLocalizer.setCameraPosition(
-                    FieldConstants.inchesToMm(6),  // 6 inches forward of center
-                    0,                              // Centered left-right
-                    FieldConstants.inchesToMm(8)   // 8 inches up
+                    0,                               // Front-center (aligned with robot center)
+                    0,                               // Centered left-right
+                    FieldConstants.inchesToMm(18)    // 18 inches up (highest frame)
             );
             aprilTagLocalizer.setMaxDetectionRange(FieldConstants.inchesToMm(72)); // 6 feet max
         } catch (Exception e) {

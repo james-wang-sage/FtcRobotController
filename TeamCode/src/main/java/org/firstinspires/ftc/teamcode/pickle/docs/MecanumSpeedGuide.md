@@ -95,14 +95,14 @@ Based on testing and FTC community data:
 
 Your Pickle Bot uses:
 - **GoBILDA 312 RPM motors** with mecanum wheels
-- **RUN_USING_ENCODER mode** (closed-loop velocity control)
+- **RUN_WITHOUT_ENCODER mode** (direct power control for maximum speed)
 
-The encoder mode adds slight response delay because:
-1. Motor reads its current speed
-2. Controller calculates needed power adjustment
-3. Motor applies corrected power
+With direct power control, speed varies slightly based on:
+1. Battery voltage (lower battery = slower movement)
+2. Load on motors (pushing against objects = slower)
+3. Floor surface (carpet vs tile)
 
-This makes movement feel slightly "softer" but provides more consistent speed under varying loads.
+This mode provides maximum responsiveness and speed, making it ideal for competition driving.
 
 ---
 
@@ -170,19 +170,19 @@ Wrong orientation can reduce efficiency by 50% or more!
 
 ### 5. Switch Motor Modes (Advanced)
 
-Your code uses `RUN_USING_ENCODER` for smooth, consistent speed:
-
-```java
-frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-```
-
-For slightly more responsive (but less consistent) control, you could use:
+Your code uses `RUN_WITHOUT_ENCODER` for maximum speed and responsiveness:
 
 ```java
 frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 ```
 
-**Trade-off:** More responsive but speed varies with battery level and load.
+For smoother, more consistent speed (at the cost of responsiveness), you could use:
+
+```java
+frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+```
+
+**Trade-off:** More consistent speed but slightly slower response and reduced top speed.
 
 ---
 
@@ -210,16 +210,19 @@ driveHelper.setStrafeMultiplier(1.2);
 - Encoder: 537.7 CPR at output shaft
 - Max velocity: 2,796 ticks/sec
 
-### Why We Use RUN_USING_ENCODER
+### Why We Use RUN_WITHOUT_ENCODER for Drive Motors
 
 ```java
-// Closed-loop velocity control maintains constant speed even as
-// battery voltage drops or the robot encounters varying loads.
-frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-frontRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-backLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-backRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+// Direct power control for maximum speed and responsiveness.
+// RUN_WITHOUT_ENCODER bypasses the velocity control loop, giving
+// the fastest possible motor response - ideal for competition driving.
+frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+frontRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+backLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+backRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 ```
+
+**Note:** The launcher motor still uses `RUN_USING_ENCODER` for precise velocity control during shots.
 
 ---
 
@@ -285,6 +288,6 @@ For DECODE 2025-2026, mecanum is an excellent choice because:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-12-14
+**Document Version:** 1.1
+**Last Updated:** 2025-12-20
 **Applies To:** Pickle Bot (4-motor mecanum, DECODE 2025-2026)

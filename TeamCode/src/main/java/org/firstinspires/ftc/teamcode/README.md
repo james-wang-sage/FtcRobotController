@@ -31,17 +31,18 @@ teamcode/
 - High-speed launcher motor with velocity control
 - Two continuous rotation servos for feeding projectiles
 - State machine for launch sequence management
-- **Auto-align to goal** using IMU (hold L1/left trigger)
-- Alliance selection (X=Blue, B=Red) during init
+- **Auto-align to goal** using IMU (Left Bumper toggles ON/OFF)
+- Alliance selection (A=Red, B=Blue) during init
 - BRAKE mode for precise stopping
-- RUN_USING_ENCODER for consistent speed control
+- RUN_WITHOUT_ENCODER for maximum drive speed (direct power control)
+- RUN_USING_ENCODER on launcher for velocity control
 - Custom PIDF coefficients for launcher optimization
-- Input shaping (quadratic) for fine low-speed control
+- Linear input response for maximum responsiveness
 - Scaled deadband to eliminate joystick drift
 
 **Speed Settings:**
 - Drive Speed: **100%** power (full speed for competition)
-- Launcher: 1,400 ticks/sec target velocity (50% of max)
+- Launcher: 1,100 ticks/sec target velocity (~40% of max)
 
 **Motor Direction Configuration:**
 - Left motors (front_left, back_left): `FORWARD`
@@ -461,11 +462,11 @@ Right motors (front_right, back_right): REVERSE
 
 **Configuration Notes:**
 - **4-motor mecanum drive** with full omnidirectional movement
-- All drive motor encoders must be connected (required for RUN_USING_ENCODER)
+- Drive motors use RUN_WITHOUT_ENCODER (encoders optional but recommended for odometry)
 - Launcher motor must have encoder cable connected for velocity control
 - Left feeder servo is set to REVERSE direction in code
 - All drive motors use BRAKE mode for precise stopping
-- IMU orientation: Logo UP, USB FORWARD (adjust if Control Hub mounted differently)
+- IMU orientation: Logo LEFT, USB FORWARD (adjust if Control Hub mounted differently)
 
 ---
 
@@ -513,7 +514,7 @@ Sensors:
 4. **Backup/Testing:** Use `BasicOmniOpMode_Linear` (drive only, no launcher)
 
 ### For Drivers (Practice)
-1. **Full Robot:** `pickle/PickleTeleOp.java` ✅ (100% speed, Left Bumper for slow mode)
+1. **Full Robot:** `pickle/PickleTeleOp.java` ✅ (100% speed, Left Bumper for auto-align)
 2. **Drive Only:** `basic/BasicOmniOpMode_Linear.java` ✅
 3. **Learning:** Enable and try sample OpModes in `tele/` folder
 
@@ -669,7 +670,7 @@ All OpModes in this directory are based on FTC SDK samples and are subject to th
 
 ---
 
-**Last Updated:** 2025-12-14
+**Last Updated:** 2025-12-20
 **Season:** DECODE (2025-2026)
 **SDK Version:** 11.0
 **Team Robot:** Pickle Bot (based on goBILDA StarterBot)

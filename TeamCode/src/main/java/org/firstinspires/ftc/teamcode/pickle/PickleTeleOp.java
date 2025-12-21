@@ -223,8 +223,9 @@ public class PickleTeleOp extends OpMode {
      * move on to the next state.
      * This enum is called the "LaunchState". It reflects the current condition of the shooter
      * motor and we move through the enum when the user asks our code to fire a shot.
-     * It starts at idle, when the user requests a launch, we enter SPIN_UP where we get the
-     * motor up to speed, once it meets a minimum speed then it starts and then ends the launch process.
+     * It starts at IDLE. When the user requests a launch, we enter SPIN_UP to reach speed, then
+     * LAUNCH/LAUNCHING to feed. After feeding completes we return to IDLE (feeding stops), but the
+     * launcher motor stays at its last commanded velocity unless the driver presses X to stop.
      * We can use higher level code to cycle through these states. But this allows us to write
      * functions and autonomous routines in a way that avoids loops within loops, and "waits".
      */
@@ -820,34 +821,37 @@ public class PickleTeleOp extends OpMode {
     }
 
     /*
-     * INPUT SHAPING HELPER FUNCTION (Quadratic Scaling)
+     * INPUT SHAPING HELPER FUNCTION
      *
-     * Creates a non-linear response curve for finer low-speed control.
+     * Currently configured for LINEAR response (input = output).
+     * This provides maximum responsiveness and full power availability.
      *
-     * WHY USE INPUT SHAPING?
-     * Linear joystick response (input = output) makes precise movements difficult.
-     * Squaring the input gives you:
-     *   - Fine control at low speeds (great for alignment)
-     *   - Full power still available at max stick (for fast movement)
+     * WHY LINEAR?
+     * - Maximum speed: 100% stick = 100% power (no reduction)
+     * - Instant response: Great for competition driving
+     * - Simpler control: What you push is what you get
      *
-     * HOW IT WORKS (squaring with sign preservation):
-     *   - Input: 0.1  → Output: 0.01 (10% stick = 1% power - very precise!)
-     *   - Input: 0.3  → Output: 0.09 (30% stick = 9% power)
+     * TRADE-OFF:
+     * Linear response makes fine adjustments harder at low speeds.
+     * If you need more precision for alignment, consider switching to
+     * quadratic scaling by uncommenting the alternative implementation below.
+     *
+     * QUADRATIC ALTERNATIVE (for precision driving):
+     * Squaring the input creates a curved response:
+     *   - Input: 0.3  → Output: 0.09 (30% stick = 9% power - precise!)
      *   - Input: 0.5  → Output: 0.25 (50% stick = 25% power)
      *   - Input: 0.7  → Output: 0.49 (70% stick = 49% power)
      *   - Input: 1.0  → Output: 1.0  (100% stick = 100% power)
-     *   - Input: -0.5 → Output: -0.25 (sign preserved for direction!)
      *
-     * ALTERNATIVE CURVES:
-     * - Cubic (value³): Even more sensitive at low speeds
-     * - Square root (√value): More linear at low, compressed at high (rarely used)
-     *
-     * Math.copySign ensures negative inputs produce negative outputs.
+     * To enable quadratic scaling, change the return statement to:
+     *   return Math.copySign(value * value, value);
      */
     double shapeInput(double value) {
-        // Linear response - no input shaping for maximum speed
-        // Previously: value² which reduced 70% stick to 49% power
+        // Linear response - maximum speed, direct control
         return value;
+
+        // ALTERNATIVE: Quadratic scaling for finer low-speed control
+        // return Math.copySign(value * value, value);
     }
 
     /*
@@ -872,6 +876,7 @@ public class PickleTeleOp extends OpMode {
 
         switch (launchState) {
             case IDLE:
+                // IDLE means no feeding; launcher keeps last velocity unless X pressed.
                 // Manual spin-up request (Y button) - pre-heat launcher for faster shots
                 if (requestSpinUp) {
                     launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);

@@ -147,50 +147,71 @@ public class PickleTeleOp extends OpMode {
     /*
      * AUTO-ALIGN HEADING CONSTANTS
      *
-     * COORDINATE SYSTEM (robot-relative, yaw reset at match start):
-     *   - Robot starts FACING THE FAR WALL (toward goals)
-     *   - IMU yaw is reset to 0° at match start
-     *   - 0° = straight ahead (far wall)
-     *   - Positive angles = counter-clockwise (turn left)
-     *   - Negative angles = clockwise (turn right)
+     * COORDINATE SYSTEMS:
+     *
+     * 1. FIELD COORDINATE SYSTEM (absolute, math convention):
+     *    - Origin at (0,0) = bottom-left corner of field
+     *    - 0° = right (+X direction)
+     *    - 90° = up (+Y direction, toward far wall)
+     *    - 180° = left (-X direction)
+     *    - 270° = down (-Y direction)
+     *    - Counter-clockwise = positive rotation
+     *
+     * 2. ROBOT/IMU COORDINATE SYSTEM (relative, reset at match start):
+     *    - 0° = wherever robot faces at match start (typically 90° field = far wall)
+     *    - Positive angles = counter-clockwise (turn left)
+     *    - Negative angles = clockwise (turn right)
+     *    - IMU heading = Field heading - 90° (when robot starts facing far wall)
      *
      * DECODE FIELD LAYOUT (viewed from above):
-     *       ┌─────────────────────────────────┐
-     *       │  BLUE GOAL ◇         ◇ RED GOAL │  ← FAR WALL
-     *       │  (top-left)         (top-right) │
-     *       │       ↖               ↗         │
-     *       │        \   [🤖]     /           │  ← Robot starts facing up (0°)
-     *       │         \   ↑     /             │
-     *       │          \  │   /               │
-     *       │           45° each side         │
-     *       │                                 │
-     *       │  RED START         BLUE START   │  ← NEAR WALL (alliance stations)
-     *       └─────────────────────────────────┘
      *
-     * The goal zones have 45-degree angled borders (diagonal ramps).
-     * To launch balls perpendicular to these borders:
+     *       (0,144)                              (144,144)
+     *          ┌──────────────────────────────────────┐
+     *          │  BLUE GOAL ◢              ◣ RED GOAL │  ← FAR WALL (field 90°)
+     *          │  Field: 135°              Field: 45° │
+     *          │  IMU: +45°                IMU: -45°  │
+     *          │                                      │
+     *          │              90° (up/+Y)             │
+     *          │                  ↑                   │
+     *          │       180° ←─────┼─────→ 0°          │  ← Field compass
+     *          │         (-X)     │      (+X)         │
+     *          │                  ↓                   │
+     *          │              270° (down/-Y)          │
+     *          │                                      │
+     *          │  [RED START]            [BLUE START] │  ← NEAR WALL (alliance stations)
+     *          └──────────────────────────────────────┘
+     *       (0,0)                                (144,0)
      *
-     * RED Goal (top-right corner from robot's view):
-     *   - Turn LEFT (counter-clockwise) ~45° to face perpendicular to ramp
-     *   - Target heading = +45°
+     * ROBOT STARTING POSITION:
+     *   - Robot starts facing the FAR WALL (field 90°, +Y direction)
+     *   - IMU yaw is reset to 0° at match start
+     *   - This makes: IMU reading = Field angle - 90°
      *
-     * BLUE Goal (top-left corner from robot's view):
-     *   - Turn RIGHT (clockwise) ~45° to face perpendicular to ramp
-     *   - Target heading = -45°
+     * TARGET HEADINGS (IMU values):
+     *
+     *   RED Goal (top-right corner, field 45°):
+     *     - Turn RIGHT (clockwise) 45° from start
+     *     - IMU target = -45°
+     *
+     *   BLUE Goal (top-left corner, field 135°):
+     *     - Turn LEFT (counter-clockwise) 45° from start
+     *     - IMU target = +45°
      *
      * TUNING: If alignment is off, adjust these values during practice.
      * Use telemetry to read actual heading when manually aligned to goal.
      */
-    final double RED_GOAL_PERPENDICULAR_HEADING_DEG = 45.0;
-    final double BLUE_GOAL_PERPENDICULAR_HEADING_DEG = -45.0;
+    final double RED_GOAL_PERPENDICULAR_HEADING_DEG = -45.0;   // Turn RIGHT (CW) toward red goal
+    final double BLUE_GOAL_PERPENDICULAR_HEADING_DEG = 45.0;   // Turn LEFT (CCW) toward blue goal
 
     // Heading tolerance for auto-alignment (in degrees)
+    // Increase if robot oscillates around target; decrease for tighter alignment
     final double ALIGN_TOLERANCE_DEG = 3.0;
 
     // Rotation speed during auto-alignment (0 to 1)
-    final double ALIGN_ROTATION_SPEED = 0.35;
+    final double ALIGN_ROTATION_SPEED = 0.8;
 
     // Proportional gain for heading correction during auto-align
+    // Lower = smoother but slower, Higher = faster but may oscillate
     final double ALIGN_HEADING_KP = 0.015;
 
     // Declare OpMode members - 4 mecanum drive motors
@@ -965,9 +986,10 @@ public class PickleTeleOp extends OpMode {
         }
 
         // Apply proportional control for smooth rotation
-        // Positive error → need to rotate counter-clockwise (positive rotation)
-        // Negative error → need to rotate clockwise (negative rotation)
-        double rotatePower = headingErrorDeg * ALIGN_HEADING_KP;
+        // Positive error (target > current) → need to rotate counter-clockwise → negative rotation
+        // Negative error (target < current) → need to rotate clockwise → positive rotation
+        // Note: In our mecanum formula, positive rotate = clockwise, so we negate
+        double rotatePower = -headingErrorDeg * ALIGN_HEADING_KP;
 
         // Clamp to maximum alignment speed
         rotatePower = clamp(rotatePower, -ALIGN_ROTATION_SPEED, ALIGN_ROTATION_SPEED);

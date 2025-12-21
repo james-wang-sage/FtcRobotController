@@ -581,6 +581,24 @@ public class MyOpMode extends LinearOpMode {
 - Hold **X** to stop launcher or cancel a shot
 - Select alliance during init: **A** = Red, **B** = Blue
 
+**Auto-Align Targets (IMU Headings):**
+```
+    (0,144)                              (144,144)
+       ┌────────────────────────────────────┐
+       │  BLUE GOAL              RED GOAL   │  ← FAR WALL
+       │  IMU: +45°              IMU: -45°  │
+       │                                    │
+       │            Robot starts            │
+       │            facing UP               │
+       │            (IMU = 0°)              │
+       │                                    │
+       │  [RED START]        [BLUE START]   │  ← NEAR WALL
+       └────────────────────────────────────┘
+    (0,0)                                (144,0)
+```
+- **RED alliance:** Auto-align to **-45°** (turn right toward red goal)
+- **BLUE alliance:** Auto-align to **+45°** (turn left toward blue goal)
+
 ### Autonomous Period
 **Primary:** `pickle/PickleAutoOp` ✅ - Reliable encoder-based autonomous (80% speed)
 **Advanced:** `pickle/PickleAutoHolonomic` ✅ - Sensor fusion with AprilTag corrections

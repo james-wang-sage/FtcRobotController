@@ -20,7 +20,7 @@ Our motion system consists of five main components:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        PathFollower                              │
+│                        PathFollower                             │
 │   (High-level path execution with waypoints)                    │
 └───────────────────────────┬─────────────────────────────────────┘
                             │ uses
@@ -82,18 +82,26 @@ double heading = pose.getHeading(); // 1.57 radians (90 degrees)
 Pose2d bluePose = redPose.mirrorForBlue();
 ```
 
-**Coordinate System:**
+**Coordinate System (DECODE Field):**
 ```
-                    +Y (toward far side)
-                        ↑
-                        │
-                        │
-    Blue Alliance ──────┼────── Red Alliance  +X
-                        │
-                        │
-                    -Y (toward audience)
+        (0,144)                              (144,144)
+           ┌──────────────────────────────────────┐
+           │  BLUE GOAL ◢              ◣ RED GOAL │  ← FAR WALL (+Y)
+           │  Field: 135°              Field: 45° │
+           │                                      │
+           │              90° (up/+Y)             │
+           │                  ↑                   │
+           │       180° ←─────┼─────→ 0°          │  ← Field compass
+           │         (-X)     │      (+X)         │
+           │                  ↓                   │
+           │              270° (down/-Y)          │
+           │                                      │
+           │  [RED START]            [BLUE START] │  ← NEAR WALL (-Y)
+           └──────────────────────────────────────┘
+        (0,0)                                (144,0)
 
-    Heading: 0 = facing +X, counter-clockwise positive
+    Field Heading: 0° = +X (right), 90° = +Y (up), CCW positive
+    Robot/IMU: 0° = starting direction (usually 90° field), CCW positive
 ```
 
 ---
@@ -238,9 +246,9 @@ while (!follower.isComplete()) {
 ### The Control Loop
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────┐
 │                    Main Loop (~50Hz)                         │
-├─────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
 │  1. Update Odometry                                          │
 │     └─> Read encoders → Calculate deltas → Update pose       │
 │                                                              │
@@ -249,12 +257,12 @@ while (!follower.isComplete()) {
 │         └─> If yes: execute action, advance to next          │
 │         └─> If no: calculate target pose for current waypoint│
 │                                                              │
-│  3. DriveHelper.driveToPose(target, current, speed)         │
+│  3. DriveHelper.driveToPose(target, current, speed)          │
 │     └─> Calculate error (target - current)                   │
 │     └─> Apply proportional control: power = Kp × error       │
 │     └─> Transform to field-centric if needed                 │
 │     └─> Send powers to motors                                │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Proportional Control

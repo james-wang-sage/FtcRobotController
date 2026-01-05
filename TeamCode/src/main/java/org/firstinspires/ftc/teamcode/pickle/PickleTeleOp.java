@@ -111,7 +111,8 @@ public class PickleTeleOp extends OpMode {
      */
 
     final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
-    final double LAUNCH_COOLDOWN_SECONDS = 1.0; //Minimum time between launches to prevent rapid-fire
+    final double SHOT_INTERVAL_SECONDS = 0.30; //Time between balls in a multi-shot sequence (for feeder reset)
+    final int BALLS_PER_LAUNCH = 3; //Number of balls to fire per button press
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
 
@@ -231,7 +232,7 @@ public class PickleTeleOp extends OpMode {
     private double cachedHeadingDeg = 0.0;
 
     ElapsedTime feederTimer = new ElapsedTime();
-    ElapsedTime launchCooldownTimer = new ElapsedTime(); // Tracks time since last launch
+    int shotsFired = 0; // Tracks how many balls have been fired in current sequence
 
     /*
      * TECH TIP: State Machines
@@ -255,6 +256,7 @@ public class PickleTeleOp extends OpMode {
         SPIN_UP,
         LAUNCH,
         LAUNCHING,
+        WAIT_BETWEEN,  // Pause between shots in multi-shot sequence
     }
 
     /*
@@ -312,9 +314,8 @@ public class PickleTeleOp extends OpMode {
         alignState = AlignState.IDLE;
 
         // Reset timers to start counting from initialization, not object construction
-        // This ensures cooldown displays correctly and timing aligns with match start
         feederTimer.reset();
-        launchCooldownTimer.reset();
+        shotsFired = 0;
 
         /*
          * Initialize the hardware variables. Note that the strings used here as parameters
@@ -559,9 +560,8 @@ public class PickleTeleOp extends OpMode {
         }
 
         // Reset timers to count from match start
-        // Without this, cooldown timer shows time since init (could be minutes!)
         feederTimer.reset();
-        launchCooldownTimer.reset();
+        shotsFired = 0;
 
         // Ensure state machines start in known states
         // (Already set in init(), but good practice to be explicit)
@@ -662,12 +662,11 @@ public class PickleTeleOp extends OpMode {
                     cachedHeadingDeg, targetHeading, headingError);
         }
 
-        // Show launch cooldown status
-        double cooldownRemaining = LAUNCH_COOLDOWN_SECONDS - launchCooldownTimer.seconds();
-        if (cooldownRemaining > 0) {
-            telemetry.addData("Launch Cooldown", "%.1f sec", cooldownRemaining);
+        // Show multi-shot progress
+        if (launchState != LaunchState.IDLE) {
+            telemetry.addData("Launch Progress", "%d/%d balls", shotsFired, BALLS_PER_LAUNCH);
         } else {
-            telemetry.addData("Launch Status", "READY");
+            telemetry.addData("Launch Status", "READY (%d balls)", BALLS_PER_LAUNCH);
         }
 
         // Display all 4 motor powers in a readable format
@@ -892,6 +891,7 @@ public class PickleTeleOp extends OpMode {
             launcher.setVelocity(STOP_SPEED);
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
+            shotsFired = 0;
             return;
         }
 
@@ -903,8 +903,9 @@ public class PickleTeleOp extends OpMode {
                     launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
                 }
 
-                // Shot request (Right bumper) - start full launch sequence
-                if (requestShot && launchCooldownTimer.seconds() >= LAUNCH_COOLDOWN_SECONDS) {
+                // Shot request (Right bumper) - start multi-shot sequence
+                if (requestShot) {
+                    shotsFired = 0; // Reset counter for new sequence
                     launchState = LaunchState.SPIN_UP;
                 }
                 break;
@@ -920,6 +921,11 @@ public class PickleTeleOp extends OpMode {
                 break;
 
             case LAUNCH:
+                // Re-check velocity before each shot to prevent weak launches
+                if (launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+                    launchState = LaunchState.SPIN_UP;
+                    break;
+                }
                 // Activate feeders to push ball into launcher
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);
@@ -933,10 +939,30 @@ public class PickleTeleOp extends OpMode {
 
                 // Wait for feed time to complete
                 if (feederTimer.seconds() > FEED_TIME_SECONDS) {
-                    launchState = LaunchState.IDLE;
+                    shotsFired++;
                     leftFeeder.setPower(STOP_SPEED);
                     rightFeeder.setPower(STOP_SPEED);
-                    launchCooldownTimer.reset(); // Start cooldown period after launch completes
+
+                    // Check if we've fired all balls
+                    if (shotsFired >= BALLS_PER_LAUNCH) {
+                        launchState = LaunchState.IDLE;
+                        shotsFired = 0;
+                    } else {
+                        // More balls to fire - enter wait state before next shot
+                        feederTimer.reset();
+                        launchState = LaunchState.WAIT_BETWEEN;
+                    }
+                }
+                break;
+
+            case WAIT_BETWEEN:
+                // Keep launcher spinning during pause
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Wait for interval between shots (feeders are stopped)
+                if (feederTimer.seconds() > SHOT_INTERVAL_SECONDS) {
+                    // Go to LAUNCH which will re-check velocity before firing
+                    launchState = LaunchState.LAUNCH;
                 }
                 break;
         }

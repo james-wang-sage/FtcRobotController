@@ -110,8 +110,9 @@ public class PickleTeleOp extends OpMode {
      * - Expansion Hub Port 0: launcher
      */
 
-    final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
+    final double FEED_TIME_SECONDS = 0.35; //The feeder servos run this long when a shot is requested.
     final double SHOT_INTERVAL_SECONDS = 0.30; //Time between balls in a multi-shot sequence (for feeder reset)
+    final double SPIN_UP_TIMEOUT_SECONDS = 1.0; //Max time to wait for velocity recovery before firing anyway
     final int BALLS_PER_LAUNCH = 3; //Number of balls to fire per button press
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
@@ -232,7 +233,9 @@ public class PickleTeleOp extends OpMode {
     private double cachedHeadingDeg = 0.0;
 
     ElapsedTime feederTimer = new ElapsedTime();
+    ElapsedTime spinUpTimer = new ElapsedTime(); // Tracks spin-up time for timeout
     int shotsFired = 0; // Tracks how many balls have been fired in current sequence
+    boolean spinUpTimedOut = false; // Flag to bypass velocity check after timeout
 
     /*
      * TECH TIP: State Machines
@@ -892,6 +895,7 @@ public class PickleTeleOp extends OpMode {
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
             shotsFired = 0;
+            spinUpTimedOut = false;
             return;
         }
 
@@ -906,6 +910,8 @@ public class PickleTeleOp extends OpMode {
                 // Shot request (Right bumper) - start multi-shot sequence
                 if (requestShot) {
                     shotsFired = 0; // Reset counter for new sequence
+                    spinUpTimedOut = false; // Reset timeout flag
+                    spinUpTimer.reset(); // Start timing spin-up
                     launchState = LaunchState.SPIN_UP;
                 }
                 break;
@@ -915,21 +921,38 @@ public class PickleTeleOp extends OpMode {
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
 
                 // Check if we've reached minimum velocity for launch
-                if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY) {
+                // OR if we've waited too long (timeout prevents stuck sequence)
+                boolean velocityReady = launcher.getVelocity() > LAUNCHER_MIN_VELOCITY;
+                boolean timedOut = spinUpTimer.seconds() > SPIN_UP_TIMEOUT_SECONDS;
+                if (velocityReady || timedOut) {
+                    spinUpTimedOut = timedOut && !velocityReady; // Flag to bypass velocity check
                     launchState = LaunchState.LAUNCH;
                 }
+
+                telemetry.addData("Spin-up Progress", "%.2fs | %.0f / %.0f",
+                    spinUpTimer.seconds(), launcher.getVelocity(), LAUNCHER_MIN_VELOCITY);
                 break;
 
             case LAUNCH:
                 // Re-check velocity before each shot to prevent weak launches
-                if (launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+                // BUT skip check if we already timed out (fire anyway)
+                if (!spinUpTimedOut && launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+                    spinUpTimer.reset(); // Reset timeout for velocity recovery
                     launchState = LaunchState.SPIN_UP;
                     break;
                 }
+
+                // Log pre-shot velocity for trajectory analysis
+                telemetry.addData(String.format("Ball %d Pre-shot Velocity", shotsFired + 1),
+                    "%.0f / %.0f", launcher.getVelocity(), LAUNCHER_TARGET_VELOCITY);
+
+                // Ensure launcher is at target velocity before feeding
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
                 // Activate feeders to push ball into launcher
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);
                 feederTimer.reset();
+                spinUpTimedOut = false; // Reset flag after using it
                 launchState = LaunchState.LAUNCHING;
                 break;
 
@@ -958,6 +981,10 @@ public class PickleTeleOp extends OpMode {
             case WAIT_BETWEEN:
                 // Keep launcher spinning during pause
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Track velocity recovery between shots
+                telemetry.addData("Velocity Recovery", "%.0f / %.0f",
+                    launcher.getVelocity(), LAUNCHER_TARGET_VELOCITY);
 
                 // Wait for interval between shots (feeders are stopped)
                 if (feederTimer.seconds() > SHOT_INTERVAL_SECONDS) {

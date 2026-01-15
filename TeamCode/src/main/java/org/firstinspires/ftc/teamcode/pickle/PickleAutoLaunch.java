@@ -42,22 +42,47 @@ import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.pickle.config.PickleHardwareNames;
+import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
 
 /**
- * Simple Autonomous OpMode: Launch 3 Balls
+ * Simple Autonomous OpMode: Launch 3 Balls + LEAVE
+ *
+ * FIELD COORDINATES:
+ * - 0° = up (toward far wall)
+ * - 90° = right
+ * - 180° = down (toward alliance station / near wall)
+ * - 270° = left
  *
  * STARTING POSITION:
- * - Red alliance, next to goal zone
- * - Robot facing perpendicular to the goal zone border
+ * - Red alliance, inside the Launch Zone (white triangle, top-right corner)
+ * - Robot FACING 45° (toward the goal in the corner)
  * - Pre-loaded with 3 balls
  *
  * STRATEGY:
- * - Robot stays stationary (no driving)
- * - Spin up launcher
- * - Launch 3 balls in sequence with 1-second intervals
+ * 1. Spin up launcher and launch 3 balls (while stationary, facing 45° at goal)
+ * 2. Wait 3 seconds (optional delay for ball settling / alliance coordination)
+ * 3. Move toward 180° (down on field) to exit the Launch Zone
+ *    - Robot faces 45°, robot's right is 135° field
+ *    - 180° is between right (135°) and back (225°) = backward-right diagonal
+ *    - Uses mecanum diagonal drive pattern (FR and BL only)
+ * 4. Score LEAVE (3 Ranking Points) by being fully outside the Launch Zone at AUTO end
  *
- * This is a minimal autonomous for quickly scoring pre-loaded balls
- * without any complex path following or vision processing.
+ * WHY DIAGONAL STRAFE?
+ * - Robot faces toward goal to launch (45° for Red, 135° for Blue)
+ * - Exit direction is 180° (straight down on field) for both alliances
+ * - Mecanum wheels enable movement in any direction without rotating
+ * - Robot maintains goal alignment throughout AUTO
+ *
+ * ALLIANCE MIRRORING:
+ * - RED:  Faces 45°,  exit 180° = back-right diagonal  (FR+BL pair, negative)
+ * - BLUE: Faces 135°, exit 180° = forward-right diagonal (FL+BR pair, positive)
+ *
+ * ALLIANCE SELECTION (same as TeleOp):
+ * - During INIT, press gamepad1.A for RED or gamepad1.B for BLUE
+ * - Default: RED alliance
+ *
+ * This autonomous scores artifacts AND earns Movement RP contribution (LEAVE).
+ * No IMU or vision required - simple encoder-based diagonal movement.
  */
 @Autonomous(name = "PickleAutoLaunch", group = "Pickle")
 public class PickleAutoLaunch extends LinearOpMode {
@@ -69,10 +94,38 @@ public class PickleAutoLaunch extends LinearOpMode {
     private static final double INTERVAL_BETWEEN_SHOTS = 1.0;     // seconds between shots
     private static final int TOTAL_BALLS = 3;                     // number of balls to launch
 
-    // Hardware
+    // LEAVE configuration - move out of Launch Zone using encoders
+    private static final double WAIT_BEFORE_DRIVE_SECONDS = 3.0;  // wait after launching before moving
+    private static final double DRIVE_SPEED = 0.5;                // motor power (0.0 to 1.0)
+
+    // Encoder configuration for distance-based movement
+    private static final double COUNTS_PER_MOTOR_REV = 537.7;     // goBILDA 5203-2402-0019 (312 RPM)
+    private static final double WHEEL_DIAMETER_MM = 96.0;         // goBILDA 96mm mecanum wheels
+    private static final double COUNTS_PER_MM = COUNTS_PER_MOTOR_REV / (WHEEL_DIAMETER_MM * Math.PI);
+
+    // Distance to exit launch zone (approximately 1.5 tiles = 36 inches = 914mm)
+    // Using slightly more to ensure we're fully outside the zone
+    private static final double EXIT_DISTANCE_MM = 900.0;         // ~35 inches to exit zone
+
+    // For diagonal movement, we need a correction factor
+    // Diagonal uses only 2 motors, so effective movement is ~70% of straight drive
+    private static final double DIAGONAL_CORRECTION = 1.4;        // compensate for diagonal inefficiency
+
+    // Alliance selection (determines diagonal direction)
+    // RED:  back-right diagonal (FR+BL pair)
+    // BLUE: forward-right diagonal (FL+BR pair)
+    private Alliance alliance = Alliance.RED;  // Default to RED
+
+    // Hardware - Launcher
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
+
+    // Hardware - Drive motors (mecanum)
+    private DcMotor frontLeft = null;
+    private DcMotor frontRight = null;
+    private DcMotor backLeft = null;
+    private DcMotor backRight = null;
 
     // Timer
     private ElapsedTime timer = new ElapsedTime();
@@ -101,14 +154,67 @@ public class PickleAutoLaunch extends LinearOpMode {
         leftFeeder.setPower(0);
         rightFeeder.setPower(0);
 
-        telemetry.addData("Status", "Ready to launch!");
-        telemetry.addData("Strategy", "Launch %d balls with %.1fs intervals", TOTAL_BALLS, INTERVAL_BETWEEN_SHOTS);
+        // Initialize drive motors (same configuration as TeleOp)
+        frontLeft = hardwareMap.get(DcMotor.class, PickleHardwareNames.FRONT_LEFT_MOTOR);
+        frontRight = hardwareMap.get(DcMotor.class, PickleHardwareNames.FRONT_RIGHT_MOTOR);
+        backLeft = hardwareMap.get(DcMotor.class, PickleHardwareNames.BACK_LEFT_MOTOR);
+        backRight = hardwareMap.get(DcMotor.class, PickleHardwareNames.BACK_RIGHT_MOTOR);
+
+        // Set motor directions (right side reversed for mecanum)
+        frontLeft.setDirection(DcMotor.Direction.FORWARD);
+        backLeft.setDirection(DcMotor.Direction.FORWARD);
+        frontRight.setDirection(DcMotor.Direction.REVERSE);
+        backRight.setDirection(DcMotor.Direction.REVERSE);
+
+        // Set zero power behavior to BRAKE for controlled stops
+        frontLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        frontRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        // Reset encoders for accurate distance tracking
+        frontLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+
+        // Set to RUN_USING_ENCODER for now (will switch to RUN_TO_POSITION for movement)
+        frontLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        backRight.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+
+        telemetry.addData("Status", "Ready! Select alliance...");
+        telemetry.addData("Strategy", "Launch %d balls, wait %.1fs, move %.0fmm",
+                          TOTAL_BALLS, WAIT_BEFORE_DRIVE_SECONDS, EXIT_DISTANCE_MM);
         telemetry.update();
 
         // =====================================
-        // WAIT FOR START
+        // ALLIANCE SELECTION (during init) - same buttons as TeleOp
         // =====================================
-        waitForStart();
+        // Press A for RED, B for BLUE while waiting for start
+        while (!isStarted() && !isStopRequested()) {
+            // Alliance selection with gamepad (same as TeleOp)
+            if (gamepad1.a) {
+                alliance = Alliance.RED;
+            } else if (gamepad1.b) {
+                alliance = Alliance.BLUE;
+            }
+
+            // Display current selection
+            telemetry.addData("=== ALLIANCE SELECTION ===", "");
+            telemetry.addData("Current Alliance", alliance == Alliance.RED ? "RED (A)" : "BLUE (B)");
+            telemetry.addData("Press A", "Select RED alliance");
+            telemetry.addData("Press B", "Select BLUE alliance");
+            telemetry.addData("", "");
+            telemetry.addData("Strategy", "Launch %d balls → wait %.1fs → move %.0fmm",
+                              TOTAL_BALLS, WAIT_BEFORE_DRIVE_SECONDS, EXIT_DISTANCE_MM);
+            telemetry.addData("Diagonal", alliance == Alliance.RED ?
+                              "Back-RIGHT (FR+BL)" : "Forward-RIGHT (FL+BR)");
+            telemetry.update();
+
+            sleep(50);
+        }
 
         if (!opModeIsActive()) return;
 
@@ -162,14 +268,115 @@ public class PickleAutoLaunch extends LinearOpMode {
         }
 
         // =====================================
-        // CLEANUP
+        // STOP LAUNCHER
         // =====================================
-        // Stop launcher
         launcher.setVelocity(0);
         leftFeeder.setPower(0);
         rightFeeder.setPower(0);
 
-        telemetry.addData("Status", "Launch sequence complete!");
+        telemetry.addData("Status", "Launch complete! Waiting %.1fs before driving...", WAIT_BEFORE_DRIVE_SECONDS);
+        telemetry.update();
+
+        // =====================================
+        // WAIT BEFORE DRIVING
+        // =====================================
+        sleep((long) (WAIT_BEFORE_DRIVE_SECONDS * 1000));
+
+        if (!opModeIsActive()) return;
+
+        // =====================================
+        // MOVE OUT OF LAUNCH ZONE (LEAVE) - ENCODER BASED
+        // =====================================
+        telemetry.addData("Status", "Moving toward 180° (down) to LEAVE zone...");
+        telemetry.addData("Alliance", alliance);
+        telemetry.update();
+
+        // Alliance-specific diagonal movement:
+        //
+        // RED ALLIANCE (robot faces 45° toward goal):
+        //   - Target 180° is back-right from robot's view
+        //   - Use FR+BL pair (both backward/negative)
+        //
+        // BLUE ALLIANCE (robot faces 135° toward goal):
+        //   - Target 180° is forward-right from robot's view
+        //   - Use FL+BR pair (both forward/positive)
+
+        // Calculate target encoder counts for the diagonal movement
+        // Apply diagonal correction factor since only 2 motors are used
+        int targetCounts = (int)(EXIT_DISTANCE_MM * COUNTS_PER_MM * DIAGONAL_CORRECTION);
+
+        // Variables for the active motor pair (depends on alliance)
+        DcMotor motor1, motor2;
+        int targetPosition;
+
+        if (alliance == Alliance.RED) {
+            // RED: Back-right diagonal (FR+BL pair, negative direction)
+            motor1 = frontRight;
+            motor2 = backLeft;
+            targetPosition = -targetCounts;  // Backward movement
+        } else {
+            // BLUE: Forward-right diagonal (FL+BR pair, positive direction)
+            motor1 = frontLeft;
+            motor2 = backRight;
+            targetPosition = targetCounts;   // Forward movement
+        }
+
+        // Reset encoders before movement
+        motor1.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        motor2.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+
+        // Set target positions
+        motor1.setTargetPosition(targetPosition);
+        motor2.setTargetPosition(targetPosition);
+
+        // Switch to RUN_TO_POSITION mode
+        motor1.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        motor2.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+
+        // Start movement (power must be positive for RUN_TO_POSITION)
+        // Only the active diagonal pair gets power
+        if (alliance == Alliance.RED) {
+            frontLeft.setPower(0);
+            frontRight.setPower(DRIVE_SPEED);
+            backLeft.setPower(DRIVE_SPEED);
+            backRight.setPower(0);
+        } else {
+            frontLeft.setPower(DRIVE_SPEED);
+            frontRight.setPower(0);
+            backLeft.setPower(0);
+            backRight.setPower(DRIVE_SPEED);
+        }
+
+        // Wait until motors reach target position (with timeout for safety)
+        timer.reset();
+        double timeoutSeconds = 5.0;  // Safety timeout
+        while (opModeIsActive() &&
+               (motor1.isBusy() || motor2.isBusy()) &&
+               timer.seconds() < timeoutSeconds) {
+
+            telemetry.addData("Status", "Moving diagonal to exit zone...");
+            telemetry.addData("Alliance", alliance);
+            telemetry.addData("Motor1 Position", "%d / %d", motor1.getCurrentPosition(), targetPosition);
+            telemetry.addData("Motor2 Position", "%d / %d", motor2.getCurrentPosition(), targetPosition);
+            telemetry.addData("Time", "%.1f / %.1f sec", timer.seconds(), timeoutSeconds);
+            telemetry.update();
+            sleep(50);
+        }
+
+        // =====================================
+        // STOP ALL MOTORS
+        // =====================================
+        frontLeft.setPower(0);
+        frontRight.setPower(0);
+        backLeft.setPower(0);
+        backRight.setPower(0);
+
+        telemetry.addData("Status", "AUTO COMPLETE!");
+        telemetry.addData("Alliance", alliance);
+        telemetry.addData("Result", "Launched %d balls + LEAVE scored", TOTAL_BALLS);
+        telemetry.addData("Distance Moved", "%.0f mm (target: %.0f mm)",
+                          Math.abs(motor1.getCurrentPosition()) / COUNTS_PER_MM / DIAGONAL_CORRECTION,
+                          EXIT_DISTANCE_MM);
         telemetry.update();
 
         // Keep telemetry visible briefly before OpMode ends

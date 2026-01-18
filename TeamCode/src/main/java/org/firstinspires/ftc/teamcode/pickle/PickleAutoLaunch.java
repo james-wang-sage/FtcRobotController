@@ -74,8 +74,8 @@ import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
  * - Robot maintains goal alignment throughout AUTO
  *
  * ALLIANCE MIRRORING:
- * - RED:  Faces 45°,  exit 180° = back-right diagonal  (FR+BL pair, negative)
- * - BLUE: Faces 135°, exit 180° = forward-right diagonal (FL+BR pair, positive)
+ * - RED:  Faces 45°,  exit 180° = back-right diagonal (FR+BL pair, negative)
+ * - BLUE: Faces 315°, exit 180° = back-left diagonal  (FL+BR pair, negative)
  *
  * ALLIANCE SELECTION (same as TeleOp):
  * - During INIT, press gamepad1.A for RED or gamepad1.B for BLUE
@@ -87,11 +87,12 @@ import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
 @Autonomous(name = "PickleAutoLaunch", group = "Pickle")
 public class PickleAutoLaunch extends LinearOpMode {
 
-    // Launcher configuration (same as TeleOp)
-    private static final double LAUNCHER_TARGET_VELOCITY = 1100;  // ticks/second
-    private static final double LAUNCHER_MIN_VELOCITY = 1000;     // minimum before launching
-    private static final double FEED_TIME_SECONDS = 0.20;         // feeder run time per shot
-    private static final double INTERVAL_BETWEEN_SHOTS = 1.0;     // seconds between shots
+    // Launcher configuration - MATCHED TO TELEOP (which works for all 3 balls!)
+    private static final double LAUNCHER_TARGET_VELOCITY = 1100;  // ticks/second (same as TeleOp)
+    private static final double LAUNCHER_MIN_VELOCITY = 1000;     // minimum before launching (same as TeleOp)
+    private static final double SPIN_UP_TIMEOUT_SECONDS = 1.0;    // max wait for velocity (same as TeleOp) - prevents hang!
+    private static final double FEED_TIME_SECONDS = 0.35;         // feeder run time per shot (same as TeleOp: 0.35)
+    private static final double INTERVAL_BETWEEN_SHOTS = 0.30;    // seconds between shots (same as TeleOp: 0.30)
     private static final int TOTAL_BALLS = 3;                     // number of balls to launch
 
     // LEAVE configuration - move out of Launch Zone using encoders
@@ -104,16 +105,24 @@ public class PickleAutoLaunch extends LinearOpMode {
     private static final double COUNTS_PER_MM = COUNTS_PER_MOTOR_REV / (WHEEL_DIAMETER_MM * Math.PI);
 
     // Distance to exit launch zone (approximately 1.5 tiles = 36 inches = 914mm)
-    // Using slightly more to ensure we're fully outside the zone
-    private static final double EXIT_DISTANCE_MM = 900.0;         // ~35 inches to exit zone
+    // Increased to ensure we're fully outside the zone with margin
+    private static final double EXIT_DISTANCE_MM = 1350.0;        // ~53 inches (+6" from 1200mm)
 
     // For diagonal movement, we need a correction factor
     // Diagonal uses only 2 motors, so effective movement is ~70% of straight drive
     private static final double DIAGONAL_CORRECTION = 1.4;        // compensate for diagonal inefficiency
 
+    // Angle correction for each alliance:
+    // RED:  Pure FR+BL diagonal drifts ~35° left (215° instead of 180°)
+    //       Add FL+BR forward to steer right → back toward 180°
+    // BLUE: Pure FL+BR diagonal drifts ~10° left (190° instead of 180°)
+    //       Add FR+BL backward to steer right → back toward 180°
+    private static final double RED_ANGLE_CORRECTION = 0.35;      // FL+BR forward power for RED
+    private static final double BLUE_ANGLE_CORRECTION = 0.15;     // FR+BL backward power for BLUE
+
     // Alliance selection (determines diagonal direction)
-    // RED:  back-right diagonal (FR+BL pair)
-    // BLUE: forward-right diagonal (FL+BR pair)
+    // RED:  back-right diagonal (FR+BL pair, backward)
+    // BLUE: back-left diagonal (FL+BR pair, backward)
     private Alliance alliance = Alliance.RED;  // Default to RED
 
     // Hardware - Launcher
@@ -210,7 +219,9 @@ public class PickleAutoLaunch extends LinearOpMode {
             telemetry.addData("Strategy", "Launch %d balls → wait %.1fs → move %.0fmm",
                               TOTAL_BALLS, WAIT_BEFORE_DRIVE_SECONDS, EXIT_DISTANCE_MM);
             telemetry.addData("Diagonal", alliance == Alliance.RED ?
-                              "Back-RIGHT (FR+BL)" : "Forward-RIGHT (FL+BR)");
+                              "Back-RIGHT (FR+BL)" : "Back-LEFT (FL+BR)");
+            telemetry.addData("Angle Correction", "%.0f%% (steer toward 180° field)",
+                              (alliance == Alliance.RED ? RED_ANGLE_CORRECTION : BLUE_ANGLE_CORRECTION) * 100);
             telemetry.update();
 
             sleep(50);
@@ -227,43 +238,116 @@ public class PickleAutoLaunch extends LinearOpMode {
         // Start spinning up the launcher immediately
         launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
 
-        // Wait for launcher to reach minimum velocity
+        // Wait for launcher to reach minimum velocity (with timeout to prevent hang)
+        // CRITICAL: Continuously command velocity like TeleOp does
         telemetry.addData("Status", "Spinning up launcher...");
         telemetry.update();
-        while (opModeIsActive() && launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+        timer.reset();
+        while (opModeIsActive() &&
+               launcher.getVelocity() < LAUNCHER_MIN_VELOCITY &&
+               timer.seconds() < SPIN_UP_TIMEOUT_SECONDS) {
+            // Keep commanding velocity every iteration (like TeleOp)
+            launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+            telemetry.addData("Status", "Initial SPIN_UP");
             telemetry.addData("Launcher Speed", "%.0f / %.0f", launcher.getVelocity(), LAUNCHER_MIN_VELOCITY);
+            telemetry.addData("Spin-up Time", "%.2f / %.1f sec", timer.seconds(), SPIN_UP_TIMEOUT_SECONDS);
             telemetry.update();
-            sleep(50);
+            sleep(10);  // 10ms loop like TeleOp's ~20Hz rate
         }
 
-        // Launch each ball with interval
-        for (int ball = 1; ball <= TOTAL_BALLS && opModeIsActive(); ball++) {
-            telemetry.addData("Status", "Launching ball %d of %d", ball, TOTAL_BALLS);
-            telemetry.addData("Launcher Speed", "%.0f", launcher.getVelocity());
+        // Log if we timed out (fire anyway - better than hanging)
+        if (launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+            telemetry.addData("WARNING", "Spin-up timed out! Firing anyway at %.0f", launcher.getVelocity());
             telemetry.update();
+        }
 
-            // Ensure launcher is still at speed before feeding
-            if (launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
-                // Wait for launcher to spin back up
-                while (opModeIsActive() && launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
-                    sleep(10);
+        // Launch each ball with interval - EXACTLY LIKE TELEOP
+        // Key: Continuously command launcher.setVelocity() in EVERY loop iteration
+        // TeleOp does this in every state, which keeps the PIDF controller actively responding
+        for (int ball = 1; ball <= TOTAL_BALLS && opModeIsActive(); ball++) {
+
+            // === SPIN_UP STATE (from TeleOp) ===
+            // Wait for velocity with timeout, continuously commanding target velocity
+            timer.reset();
+            while (opModeIsActive() &&
+                   launcher.getVelocity() < LAUNCHER_MIN_VELOCITY &&
+                   timer.seconds() < SPIN_UP_TIMEOUT_SECONDS) {
+                // CRITICAL: Continuously command velocity (like TeleOp does)
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                telemetry.addData("Status", "Ball %d: SPIN_UP", ball);
+                telemetry.addData("Launcher Speed", "%.0f / %.0f",
+                                  launcher.getVelocity(), LAUNCHER_MIN_VELOCITY);
+                telemetry.addData("Spin-up Time", "%.2f / %.1f sec",
+                                  timer.seconds(), SPIN_UP_TIMEOUT_SECONDS);
+                telemetry.update();
+                sleep(10);
+            }
+
+            // === LAUNCH STATE (from TeleOp) ===
+            // Re-check velocity RIGHT BEFORE feeding (like TeleOp does)
+            // If velocity dropped, go back to SPIN_UP
+            while (opModeIsActive() && launcher.getVelocity() < LAUNCHER_MIN_VELOCITY) {
+                // Velocity dropped - wait for recovery (with timeout)
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+                telemetry.addData("Status", "Ball %d: LAUNCH re-check (velocity dropped!)", ball);
+                telemetry.addData("Launcher Speed", "%.0f / %.0f (recovering)",
+                                  launcher.getVelocity(), LAUNCHER_MIN_VELOCITY);
+                telemetry.update();
+                sleep(10);
+
+                // Break out if we've waited too long (fire anyway)
+                if (timer.seconds() > SPIN_UP_TIMEOUT_SECONDS * 2) {
+                    telemetry.addData("WARNING", "Re-check timeout, firing anyway");
+                    break;
                 }
             }
 
-            // Feed the ball
+            // Log pre-shot velocity
+            double velocityBeforeFeed = launcher.getVelocity();
+            telemetry.addData("Status", "Ball %d: LAUNCH at %.0f", ball, velocityBeforeFeed);
+            telemetry.update();
+
+            // === LAUNCHING STATE (from TeleOp) ===
+            // Feed the ball while continuously commanding velocity
             leftFeeder.setPower(1.0);
             rightFeeder.setPower(1.0);
-            sleep((long) (FEED_TIME_SECONDS * 1000));
+            timer.reset();
+            while (opModeIsActive() && timer.seconds() < FEED_TIME_SECONDS) {
+                // CRITICAL: Keep commanding velocity during feed (like TeleOp does)
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                telemetry.addData("Status", "Ball %d: LAUNCHING", ball);
+                telemetry.addData("Launcher Speed", "%.0f (feeding)", launcher.getVelocity());
+                telemetry.update();
+                sleep(10);
+            }
 
             // Stop feeders
             leftFeeder.setPower(0);
             rightFeeder.setPower(0);
+            double velocityAfterFeed = launcher.getVelocity();
+            telemetry.addData("Status", "Ball %d launched!", ball);
+            telemetry.addData("Velocity Drop", "%.0f → %.0f (Δ%.0f)",
+                              velocityBeforeFeed, velocityAfterFeed, velocityAfterFeed - velocityBeforeFeed);
+            telemetry.update();
 
-            // Wait interval before next shot (except after last ball)
+            // === WAIT_BETWEEN STATE (from TeleOp) ===
+            // Wait interval before next shot, continuously commanding velocity
             if (ball < TOTAL_BALLS) {
-                telemetry.addData("Status", "Waiting for next shot...");
-                telemetry.update();
-                sleep((long) (INTERVAL_BETWEEN_SHOTS * 1000));
+                timer.reset();
+                while (opModeIsActive() && timer.seconds() < INTERVAL_BETWEEN_SHOTS) {
+                    // CRITICAL: Keep commanding velocity during wait (like TeleOp does)
+                    launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                    telemetry.addData("Status", "WAIT_BETWEEN: %.2f / %.2f sec",
+                                      timer.seconds(), INTERVAL_BETWEEN_SHOTS);
+                    telemetry.addData("Velocity Recovery", "%.0f / %.0f",
+                                      launcher.getVelocity(), LAUNCHER_TARGET_VELOCITY);
+                    telemetry.update();
+                    sleep(10);
+                }
             }
         }
 
@@ -297,9 +381,9 @@ public class PickleAutoLaunch extends LinearOpMode {
         //   - Target 180° is back-right from robot's view
         //   - Use FR+BL pair (both backward/negative)
         //
-        // BLUE ALLIANCE (robot faces 135° toward goal):
-        //   - Target 180° is forward-right from robot's view
-        //   - Use FL+BR pair (both forward/positive)
+        // BLUE ALLIANCE (robot faces 315° toward goal):
+        //   - Target 180° is back-left from robot's view
+        //   - Use FL+BR pair (both backward/negative)
 
         // Calculate target encoder counts for the diagonal movement
         // Apply diagonal correction factor since only 2 motors are used
@@ -311,14 +395,16 @@ public class PickleAutoLaunch extends LinearOpMode {
 
         if (alliance == Alliance.RED) {
             // RED: Back-right diagonal (FR+BL pair, negative direction)
+            // Robot faces 45°, exit at 180° = 135° robot-relative (back-right)
             motor1 = frontRight;
             motor2 = backLeft;
             targetPosition = -targetCounts;  // Backward movement
         } else {
-            // BLUE: Forward-right diagonal (FL+BR pair, positive direction)
+            // BLUE: Back-left diagonal (FL+BR pair, negative direction)
+            // Robot faces 315° toward goal, exit at 180° = back-left from robot's view
             motor1 = frontLeft;
             motor2 = backRight;
-            targetPosition = targetCounts;   // Forward movement
+            targetPosition = -targetCounts;  // Backward movement (was incorrectly positive)
         }
 
         // Reset encoders before movement
@@ -334,17 +420,30 @@ public class PickleAutoLaunch extends LinearOpMode {
         motor2.setMode(DcMotor.RunMode.RUN_TO_POSITION);
 
         // Start movement (power must be positive for RUN_TO_POSITION)
-        // Only the active diagonal pair gets power
+        // Main diagonal pair (FR+BL for RED, FL+BR for BLUE) gets full power
+        // Add correction power to the OTHER pair to steer toward 180° field direction
+        //
+        // For RED: Pure FR+BL diagonal drifts to ~215° (35° left of target 180°)
+        //          Add FL+BR forward power to add rightward strafe, steering back to 180°
+        //
+        // For BLUE: May need opposite correction (adjust ANGLE_CORRECTION_POWER sign if needed)
         if (alliance == Alliance.RED) {
-            frontLeft.setPower(0);
-            frontRight.setPower(DRIVE_SPEED);
-            backLeft.setPower(DRIVE_SPEED);
-            backRight.setPower(0);
+            // RED: Main diagonal FR+BL backward (via RUN_TO_POSITION negative targets)
+            // Drifts to ~215° (35° left of 180°), add FL+BR forward to steer right
+            frontLeft.setPower(DRIVE_SPEED * RED_ANGLE_CORRECTION);    // correction (forward)
+            frontRight.setPower(DRIVE_SPEED);                          // main diagonal
+            backLeft.setPower(DRIVE_SPEED);                            // main diagonal
+            backRight.setPower(DRIVE_SPEED * RED_ANGLE_CORRECTION);    // correction (forward)
         } else {
-            frontLeft.setPower(DRIVE_SPEED);
-            frontRight.setPower(0);
-            backLeft.setPower(0);
-            backRight.setPower(DRIVE_SPEED);
+            // BLUE: Main diagonal FL+BR backward (via RUN_TO_POSITION negative targets)
+            // Drifts to ~190° (10° left of 180°), add FR+BL BACKWARD to steer right
+            // IMPORTANT: FR+BL are in RUN_USING_ENCODER mode, so:
+            //   - Positive power = forward (wrong!)
+            //   - Negative power = backward (correct for rightward steering)
+            frontLeft.setPower(DRIVE_SPEED);                           // main diagonal
+            frontRight.setPower(-DRIVE_SPEED * BLUE_ANGLE_CORRECTION); // correction (BACKWARD!)
+            backLeft.setPower(-DRIVE_SPEED * BLUE_ANGLE_CORRECTION);   // correction (BACKWARD!)
+            backRight.setPower(DRIVE_SPEED);                           // main diagonal
         }
 
         // Wait until motors reach target position (with timeout for safety)

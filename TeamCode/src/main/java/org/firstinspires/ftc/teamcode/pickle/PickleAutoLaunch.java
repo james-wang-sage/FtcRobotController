@@ -33,6 +33,7 @@
 package org.firstinspires.ftc.teamcode.pickle;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -85,6 +86,7 @@ import org.firstinspires.ftc.teamcode.pickle.field.Alliance;
  * No IMU or vision required - simple encoder-based diagonal movement.
  */
 @Autonomous(name = "PickleAutoLaunch", group = "Pickle")
+@Disabled
 public class PickleAutoLaunch extends LinearOpMode {
 
     // Launcher configuration - MATCHED TO TELEOP (which works for all 3 balls!)
@@ -104,9 +106,9 @@ public class PickleAutoLaunch extends LinearOpMode {
     private static final double WHEEL_DIAMETER_MM = 96.0;         // goBILDA 96mm mecanum wheels
     private static final double COUNTS_PER_MM = COUNTS_PER_MOTOR_REV / (WHEEL_DIAMETER_MM * Math.PI);
 
-    // Distance to exit launch zone (approximately 1.5 tiles = 36 inches = 914mm)
-    // Increased to ensure we're fully outside the zone with margin
-    private static final double EXIT_DISTANCE_MM = 1500.0;        // ~59 inches (+6" from 1350mm)
+    // Distance to exit launch zone toward 180° field direction (straight down)
+    // DIAGONAL_CORRECTION handles mecanum efficiency, so this is the actual field distance
+    private static final double EXIT_DISTANCE_MM = 1650.0;        // ~65 inches toward 180° (straight down on field)
 
     // For diagonal movement, we need a correction factor
     // Diagonal uses only 2 motors, so effective movement is ~70% of straight drive

@@ -106,7 +106,7 @@ public class PickleAutoLaunch extends LinearOpMode {
 
     // Distance to exit launch zone (approximately 1.5 tiles = 36 inches = 914mm)
     // Increased to ensure we're fully outside the zone with margin
-    private static final double EXIT_DISTANCE_MM = 1350.0;        // ~53 inches (+6" from 1200mm)
+    private static final double EXIT_DISTANCE_MM = 1500.0;        // ~59 inches (+6" from 1350mm)
 
     // For diagonal movement, we need a correction factor
     // Diagonal uses only 2 motors, so effective movement is ~70% of straight drive
